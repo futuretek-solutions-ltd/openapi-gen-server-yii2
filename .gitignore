@@ -1,0 +1,12 @@
+/vendor/
+/composer.lock
+/.phpunit.cache/
+/tests/output/
+/tests/test_output_*/
+/.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+

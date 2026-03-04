@@ -1,0 +1,21 @@
+<?php
+
+declare(strict_types=1);
+
+namespace futuretek\openapi\Middleware;
+
+/**
+ * Logger middleware interface.
+ *
+ * Called at various points during request processing.
+ * Default implementation delegates to Yii::info/warning/error.
+ */
+interface LoggerInterface
+{
+    public function info(string $message, array $context = []): void;
+
+    public function warning(string $message, array $context = []): void;
+
+    public function error(string $message, array $context = []): void;
+}
+
