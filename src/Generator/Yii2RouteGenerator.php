@@ -47,7 +47,9 @@ final class Yii2RouteGenerator
             $actionId = $this->toActionId($op->operationId);
             $method = strtoupper($op->httpMethod);
 
-            $route = "$controllerId/$actionId";
+            $route = $this->config->routePrefix !== null
+                ? "{$this->config->routePrefix}/$controllerId/$actionId"
+                : "$controllerId/$actionId";
 
             $comment = $op->description !== null
                 ? " // $op->description"

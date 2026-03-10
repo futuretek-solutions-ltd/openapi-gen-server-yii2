@@ -124,7 +124,11 @@ final class ControllerInterfaceGenerator
 
         // Document parameters
         if ($op->requestBodyClass !== null) {
-            $lines[] = " * @param {$op->requestBodyClass} \$body Request body";
+            if ($op->requestBodyIsArray) {
+                $lines[] = " * @param {$op->requestBodyClass}[] \$body Request body (array)";
+            } else {
+                $lines[] = " * @param {$op->requestBodyClass} \$body Request body";
+            }
         }
         foreach ($op->parameters as $param) {
             $lines[] = " * @param {$param->type}" . ($param->nullable ? '|null' : '') . " \${$param->phpName} [{$param->in}] {$param->description}";
@@ -154,7 +158,11 @@ final class ControllerInterfaceGenerator
         if ($op->requestBodyClass !== null) {
             $nullable = !$op->requestBodyRequired ? '?' : '';
             $default = !$op->requestBodyRequired ? ' = null' : '';
-            $params[] = "{$nullable}{$op->requestBodyClass} \$body{$default}";
+            if ($op->requestBodyIsArray) {
+                $params[] = "{$nullable}array \$body{$default}";
+            } else {
+                $params[] = "{$nullable}{$op->requestBodyClass} \$body{$default}";
+            }
         }
 
         // Then parameters in order: path, query, header, cookie
@@ -218,7 +226,7 @@ final class ControllerInterfaceGenerator
         $imports = [];
 
         foreach ($operations as $op) {
-            if ($op->requestBodyClass !== null && !in_array($op->requestBodyClass, self::BUILTIN_TYPES, true)) {
+            if ($op->requestBodyClass !== null && !in_array($op->requestBodyClass, self::BUILTIN_TYPES, true) && !$op->requestBodyIsArray) {
                 $imports[$op->requestBodyClass] = $schemaNamespace . '\\' . $op->requestBodyClass;
             }
 

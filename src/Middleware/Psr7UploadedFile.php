@@ -34,7 +34,12 @@ final class Psr7UploadedFile implements UploadedFileInterface
             throw new \RuntimeException('Cannot retrieve stream after it has been moved');
         }
 
-        throw new \RuntimeException('Stream access not supported — use moveTo() or getFilePath()');
+        $resource = fopen($this->filePath, 'rb');
+        if ($resource === false) {
+            throw new \RuntimeException("Cannot open file: $this->filePath");
+        }
+
+        return new Psr7Stream($resource, $this->size);
     }
 
     public function moveTo(string $targetPath): void
@@ -48,9 +53,9 @@ final class Psr7UploadedFile implements UploadedFileInterface
         }
 
         $dir = dirname($targetPath);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
+        if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+                throw new \RuntimeException("Failed to create directory: $dir");
+            }
 
         if (php_sapi_name() === 'cli') {
             if (!rename($this->filePath, $targetPath)) {

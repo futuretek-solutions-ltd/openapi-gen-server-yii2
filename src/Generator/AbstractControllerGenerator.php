@@ -100,8 +100,15 @@ final class AbstractControllerGenerator
             $lines[] = "        '{$op->operationId}' => [";
 
             if ($op->requestBodyClass !== null) {
-                $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;
-                $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
+                if ($op->requestBodyIsArray) {
+                    // Array body: reference the item class and mark as array
+                    $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;
+                    $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
+                    $lines[] = "            'bodyIsArray' => true,";
+                } else {
+                    $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;
+                    $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
+                }
                 $lines[] = "            'bodyRequired' => " . ($op->requestBodyRequired ? 'true' : 'false') . ',';
                 $lines[] = "            'mediaType' => '{$op->requestBodyMediaType}',";
 

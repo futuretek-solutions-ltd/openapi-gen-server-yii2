@@ -1042,6 +1042,209 @@ test('route file can be overridden to custom path', function () {
     expect($routes)->toHaveKey('GET pets');
 });
 
+// ============================================================
+// Route prefix tests
+// ============================================================
+
+test('routes include routePrefix when configured', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
+        baseDir: $this->baseDir,
+        namespace: 'app\\modules\\api',
+        routePrefix: 'api',
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    $routes = require $this->baseDir . '/config/routes.api.php';
+
+    expect($routes)->toBeArray();
+    expect($routes['GET pets'])->toBe('api/pet/list-pets');
+    expect($routes['POST pets'])->toBe('api/pet/create-pet');
+    expect($routes['GET pets/<petId>'])->toBe('api/pet/get-pet');
+    expect($routes['PUT pets/<petId>'])->toBe('api/pet/update-pet');
+    expect($routes['DELETE pets/<petId>'])->toBe('api/pet/delete-pet');
+    expect($routes['POST pets/<petId>/photo'])->toBe('api/pet/upload-pet-photo');
+    expect($routes['GET categories'])->toBe('api/category/list-categories');
+});
+
+test('routes have no prefix when routePrefix is null', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
+        baseDir: $this->baseDir,
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    $routes = require $this->baseDir . '/config/routes.api.php';
+
+    expect($routes['GET pets'])->toBe('pet/list-pets');
+    expect($routes['POST pets'])->toBe('pet/create-pet');
+});
+
+// ============================================================
+// Array request body tests
+// ============================================================
+
+test('array request body generates correct operationMeta with bodyIsArray', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/items/batch' => [
+                'post' => [
+                    'operationId' => 'saveItems',
+                    'tags' => ['Item'],
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'array',
+                                    'items' => ['$ref' => '#/components/schemas/ItemInput'],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+        'components' => [
+            'schemas' => [
+                'ItemInput' => [
+                    'type' => 'object',
+                    'required' => ['name'],
+                    'properties' => [
+                        'name' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+        namespace: 'app\\modules\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    $abstractFile = file_get_contents($this->baseDir . '/modules/api/contracts/AbstractItemController.php');
+
+    // Should reference the item class, not 'array'
+    expect($abstractFile)->toContain('\\app\\modules\\api\\schemas\\ItemInput::class');
+    expect($abstractFile)->toContain("'bodyIsArray' => true");
+    // Must NOT contain \app\modules\api\schemas\array::class
+    expect($abstractFile)->not->toContain('\\array::class');
+
+    $interfaceFile = file_get_contents($this->baseDir . '/modules/api/contracts/ItemControllerInterface.php');
+
+    // Method should accept array type, not ItemInput
+    expect($interfaceFile)->toContain('public function actionSaveItems(array $body): void;');
+    // Docblock should show the item type
+    expect($interfaceFile)->toContain('@param ItemInput[] $body');
+});
+
+test('array request body with optional body generates nullable array', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/items/batch' => [
+                'post' => [
+                    'operationId' => 'saveItems',
+                    'tags' => ['Item'],
+                    'requestBody' => [
+                        'required' => false,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'array',
+                                    'items' => ['$ref' => '#/components/schemas/ItemInput'],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+        'components' => [
+            'schemas' => [
+                'ItemInput' => [
+                    'type' => 'object',
+                    'required' => ['name'],
+                    'properties' => [
+                        'name' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    $interfaceFile = file_get_contents($this->baseDir . '/api/contracts/ItemControllerInterface.php');
+    expect($interfaceFile)->toContain('?array $body = null');
+});
+
+test('generates correct MultiFileUpload with file array property', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
+        baseDir: $this->baseDir,
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    $uploadFile = file_get_contents($this->baseDir . '/api/schemas/MultiFileUpload.php');
+
+    // Must import UploadedFileInterface
+    expect($uploadFile)->toContain('use Psr\\Http\\Message\\UploadedFileInterface;');
+
+    // Must import ArrayType attribute
+    expect($uploadFile)->toContain('use futuretek\\datamapper\\attributes\\ArrayType;');
+
+    // Must have @var UploadedFileInterface[] phpdoc
+    expect($uploadFile)->toContain('@var UploadedFileInterface[]');
+
+    // Must have #[ArrayType(UploadedFileInterface::class)] attribute
+    expect($uploadFile)->toContain('#[ArrayType(UploadedFileInterface::class)]');
+
+    // Must have public array $files (not UploadedFileInterface $files)
+    expect($uploadFile)->toContain('public array $files;');
+
+    // Non-file properties should not be affected
+    expect($uploadFile)->toContain('public string $description;');
+});
+
 
 
 

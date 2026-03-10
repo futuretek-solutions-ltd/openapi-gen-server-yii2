@@ -12,6 +12,9 @@ A code generator that transforms an OpenAPI 3.0.x specification into a fully typ
 - **Backed Enums** — PHP 8.4 string/int backed enums from OpenAPI enums, with `x-enum-descriptions` support
 - **Controller Interfaces & Abstract Controllers** — Generated into a `contracts` namespace (not `controllers`) to avoid conflicts with the Yii2 default controller namespace where your implementations live
 - **Yii2 Route File** — Ready-to-use URL rules configuration
+- **File Upload Handling** — Single files and file arrays (`format: binary`) mapped to PSR-7 `UploadedFileInterface`, with a built-in `Psr7Stream` implementation for `getStream()`
+- **Array Request Bodies** — Typed array body parameters (`array` of DTOs) with `@param ItemClass[]` PHPDoc and `bodyIsArray` + `bodyItemClass` in `operationMeta`
+- **Route Prefix** — Optional `routePrefix` for module-style routes (e.g. `api/pet/list-pets`)
 - **Discriminator Mapping** — Polymorphic body deserialization via `oneOf`/`anyOf` with discriminator
 - **Pluggable Middleware** — Authentication, authorization, logging, and file handling with sensible defaults
 - **Namespace = Directory** — Files are placed according to their namespace, following Yii2 conventions
@@ -47,8 +50,11 @@ vendor/bin/openapi-gen generate api.yaml \
   --schema-ns='schemas' \
   --enum-ns='enums' \
   --controller-ns='contracts' \
-  --route-file='config/routes.api.php'
+  --route-file='config/routes.api.php' \
+  --route-prefix='api'
 ```
+
+The `--route-prefix` option prepends a prefix to route targets, useful for Yii2 module-style routing (e.g. `api/pet/list-pets` instead of `pet/list-pets`).
 
 ### 3. Implement the generated interfaces
 
@@ -143,6 +149,75 @@ The first namespace segment (`app`) maps to `--base-dir`. Remaining segments bec
 - **Multipart** — Form fields + file uploads, with `UploadedFileInterface` (PSR-7) for files
 - **Discriminator** — Reads the discriminator property, resolves the concrete subclass, then deserializes
 
+### File Upload Handling
+
+File properties (`type: string, format: binary`) are converted to PSR-7 `UploadedFileInterface` instances. Both single files and arrays of files are supported:
+
+```yaml
+# Single file
+PetPhotoUpload:
+  type: object
+  properties:
+    photo:
+      type: string
+      format: binary
+
+# Array of files
+MultiFileUpload:
+  type: object
+  properties:
+    files:
+      type: array
+      items:
+        type: string
+        format: binary
+```
+
+Generated schemas use the correct types and attributes:
+
+```php
+// Single file
+public UploadedFileInterface $photo;
+
+// Array of files
+/**
+ * @var UploadedFileInterface[]
+ */
+#[ArrayType(UploadedFileInterface::class)]
+public array $files;
+```
+
+The built-in `Psr7UploadedFile` and `Psr7Stream` classes provide a complete PSR-7 implementation. Use `getStream()` to read file contents:
+
+```php
+$stream = $body->photo->getStream();
+$contents = $stream->getContents();
+```
+
+### Array Request Bodies
+
+When a request body is an array of DTOs, the generator creates the correct parameter signature:
+
+```yaml
+/items/batch:
+  post:
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/Item'
+```
+
+```php
+// Generated interface
+public function actionBatchCreate(array $body): BatchResult;
+
+// operationMeta includes bodyIsArray and bodyItemClass
+// so AbstractApiController deserializes each array element into the correct DTO
+```
+
 ### Security
 
 Security schemes are captured in `operationMeta`. The abstract controller calls `AuthenticationInterface` and `AuthorizationInterface` middleware in `beforeAction()`. Default implementations pass through — override the factory methods to plug in your auth:
@@ -155,6 +230,18 @@ class PetController extends AbstractPetController implements PetControllerInterf
         return new BearerTokenAuthentication();
     }
 }
+```
+
+### Route Prefix
+
+When using Yii2 modules, route targets need a prefix matching the module ID. Use `--route-prefix` (or `Config::$routePrefix`) to prepend it:
+
+```php
+// Without prefix (default):
+'GET pets' => 'pet/list-pets',
+
+// With --route-prefix='api':
+'GET pets' => 'api/pet/list-pets',
 ```
 
 ## CLI Options
@@ -172,6 +259,7 @@ Options:
   --enum-ns=NS            Sub-namespace for enums [default: "enums"]
   --controller-ns=NS      Sub-namespace for controllers [default: "controllers"]
   --route-file=PATH       Route file path relative to base-dir [default: "config/routes.api.php"]
+  --route-prefix=PREFIX   Prefix for route targets, e.g. "api" → "api/pet/list-pets" [default: none]
 ```
 
 ## Vendor Extensions
@@ -218,6 +306,7 @@ paths:
 | `string` + `format: date` | `DateTimeInterface` |
 | `string` + `format: date-time` | `DateTimeInterface` |
 | `string` + `format: binary` | `UploadedFileInterface` |
+| `array` + `items: {type: string, format: binary}` | `array` with `#[ArrayType(UploadedFileInterface::class)]` + `@var UploadedFileInterface[]` |
 | `array` + `items` | `array` with `#[ArrayType]` + `@var T[]` PHPDoc |
 | `object` + `additionalProperties` | `object` with `#[MapType]` |
 | `enum` | PHP backed enum |
@@ -245,6 +334,7 @@ public array $settings;
 ## Controller Interface Conventions
 
 - **Body first** — Request body is always the first parameter
+- **Array bodies** — When the request body is `type: array`, the parameter is `array $body` with `@param ItemClass[]` PHPDoc
 - **Then path params** — Required path parameters
 - **Then query/header/cookie** — Required first, then optional with defaults
 - **Return type** — Success response DTO, `array` for array responses, `void` for no-content
@@ -307,6 +397,8 @@ src/
 │   ├── AuthorizationInterface.php
 │   ├── LoggerInterface.php
 │   ├── FileHandlerInterface.php
+│   ├── Psr7Stream.php              # PSR-7 StreamInterface implementation
+│   ├── Psr7UploadedFile.php        # PSR-7 UploadedFileInterface implementation
 │   └── Default*.php                # Default pass-through implementations
 └── Parser/
     ├── OpenApiParser.php           # OpenAPI 3.0.x spec parser
@@ -315,6 +407,16 @@ src/
     ├── ParsedEnum.php
     ├── ParsedOperation.php
     └── ParsedParameter.php
+
+tests/
+├── bootstrap.php                   # Yii2 class autoloading for tests
+├── Pest.php
+├── GeneratorTest.php               # Generator output tests (52 tests)
+├── FileHandlingTest.php            # Psr7Stream, Psr7UploadedFile, DefaultFileHandler (56 tests)
+├── Yii2IntegrationTest.php         # Full pipeline integration tests (46 tests)
+└── fixtures/
+    ├── petstore.json
+    └── edge_cases.json
 ```
 
 ## License

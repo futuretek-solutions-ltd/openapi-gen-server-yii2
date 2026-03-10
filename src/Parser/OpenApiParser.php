@@ -413,6 +413,10 @@ final class OpenApiParser
                         $inlineName = ucfirst($name) . 'Item';
                         $this->parseObjectSchema($inlineName, $items);
                         $arrayItemType = $inlineName;
+                    } elseif ($items->type === 'string' && $items->format === 'binary') {
+                        // Array of file uploads
+                        $arrayItemType = '\\Psr\\Http\\Message\\UploadedFileInterface';
+                        $isFile = true;
                     } else {
                         $arrayItemType = $this->resolveScalarPhpType($items);
                     }
@@ -469,6 +473,7 @@ final class OpenApiParser
             mapValueType: $mapValueType,
             enumRef: $enumRef,
             default: $default,
+            isFile: $isFile,
         );
     }
 
@@ -602,6 +607,7 @@ final class OpenApiParser
         $requestBodyClass = null;
         $requestBodyMediaType = null;
         $requestBodyRequired = false;
+        $requestBodyIsArray = false;
 
         if ($operation->requestBody !== null && !($operation->requestBody instanceof Reference)) {
             $requestBody = $operation->requestBody;
@@ -610,7 +616,27 @@ final class OpenApiParser
             foreach ($requestBody->content as $mediaType => $mediaTypeObj) {
                 if ($mediaTypeObj instanceof MediaType && $mediaTypeObj->schema !== null) {
                     $requestBodyMediaType = $mediaType;
-                    $requestBodyClass = $this->resolveSchemaReference($mediaTypeObj->schema, ucfirst($operationId) . 'Request');
+                    $schema = $mediaTypeObj->schema;
+
+                    // Handle array request body: resolve the item class instead of returning 'array'
+                    if ($schema instanceof Schema && $schema->type === 'array' && $schema->items !== null) {
+                        $requestBodyIsArray = true;
+                        $items = $schema->items;
+                        if ($items instanceof Schema) {
+                            $itemComponentName = $this->getComponentSchemaName($items);
+                            if ($itemComponentName !== null) {
+                                $requestBodyClass = $itemComponentName;
+                            } else {
+                                $inlineName = ucfirst($operationId) . 'RequestItem';
+                                $this->resolveSchemaReference($items, $inlineName);
+                                $requestBodyClass = $inlineName;
+                            }
+                        } elseif ($items instanceof Reference) {
+                            $requestBodyClass = $this->extractRefName($items->getJsonReference()->getJsonPointer()->getPointer());
+                        }
+                    } else {
+                        $requestBodyClass = $this->resolveSchemaReference($mediaTypeObj->schema, ucfirst($operationId) . 'Request');
+                    }
                     break;
                 }
             }
@@ -666,6 +692,7 @@ final class OpenApiParser
             requestBodyClass: $requestBodyClass,
             requestBodyMediaType: $requestBodyMediaType,
             requestBodyRequired: $requestBodyRequired,
+            requestBodyIsArray: $requestBodyIsArray,
             parameters: $parameters,
             responses: $responses,
             successResponseClass: $successResponseClass,

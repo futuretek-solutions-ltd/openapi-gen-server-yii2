@@ -35,7 +35,7 @@ abstract class AbstractApiController extends Controller
     /**
      * Override to disable CSRF for API controllers.
      */
-    public bool $enableCsrfValidation = false;
+    public $enableCsrfValidation = false;
 
     /**
      * Map of operationId => action metadata.

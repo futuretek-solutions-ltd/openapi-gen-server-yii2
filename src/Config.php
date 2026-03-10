@@ -27,6 +27,7 @@ final class Config
      * @param string $enumSubNamespace Sub-namespace for generated enums (appended to $namespace)
      * @param string $controllerSubNamespace Sub-namespace for generated controller interfaces (appended to $namespace)
      * @param string $routeFile Output path for the Yii2 route configuration file (relative to baseDir or absolute)
+     * @param string|null $routePrefix Prefix for route targets (e.g. 'api' for module routes like 'api/controller/action'). If null, no prefix is added.
      */
     public function __construct(
         public readonly string $specPath,
@@ -36,6 +37,7 @@ final class Config
         public readonly string $enumSubNamespace = 'enums',
         public readonly string $controllerSubNamespace = 'contracts',
         public readonly string $routeFile = 'config/routes.api.php',
+        public readonly ?string $routePrefix = null,
     ) {}
 
     /**

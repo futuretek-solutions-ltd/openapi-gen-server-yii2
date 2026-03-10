@@ -16,9 +16,10 @@ final class ParsedOperation
      * @param string $controllerName Resolved controller name
      * @param string|null $controllerNamespace Resolved controller namespace override (x-ns)
      * @param string $actionName Resolved action method name
-     * @param string|null $requestBodyClass DTO class name for request body (null if no body)
+     * @param string|null $requestBodyClass DTO class name for request body (null if no body). For array bodies, this is the item class name.
      * @param string|null $requestBodyMediaType Media type for request body
      * @param bool $requestBodyRequired Whether request body is required
+     * @param bool $requestBodyIsArray Whether request body is an array of $requestBodyClass items
      * @param ParsedParameter[] $parameters All parameters (path, query, header, cookie)
      * @param array<int, string> $responses Map of HTTP status code => DTO class name
      * @param string|null $successResponseClass Primary success response DTO class name
@@ -36,6 +37,7 @@ final class ParsedOperation
         public readonly ?string $requestBodyClass = null,
         public readonly ?string $requestBodyMediaType = null,
         public readonly bool $requestBodyRequired = false,
+        public readonly bool $requestBodyIsArray = false,
         public readonly array $parameters = [],
         public readonly array $responses = [],
         public readonly ?string $successResponseClass = null,

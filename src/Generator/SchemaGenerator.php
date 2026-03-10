@@ -113,7 +113,7 @@ final class SchemaGenerator
                 $imports['DateTimeInterface'] = 'DateTimeInterface';
             }
 
-            if ($property->arrayItemType !== null && $this->isClassName($property->arrayItemType)) {
+            if ($property->arrayItemType !== null && ($this->isClassName($property->arrayItemType) || $property->isFile)) {
                 $hasArrayType = true;
 
                 // Import array item class if it's a schema reference
@@ -191,6 +191,10 @@ final class SchemaGenerator
             $lines[] = "#[ArrayType({$property->arrayItemType}::class)]";
         }
 
+        if ($property->arrayItemType !== null && $property->isFile) {
+            $lines[] = '#[ArrayType(UploadedFileInterface::class)]';
+        }
+
         if ($property->mapValueType !== null) {
             $valueType = $this->isClassName($property->mapValueType)
                 ? $property->mapValueType . '::class'
@@ -225,6 +229,11 @@ final class SchemaGenerator
 
     private function resolvePropertyType(ParsedProperty $property): string
     {
+        // Array of files — PHP type is array, not UploadedFileInterface
+        if ($property->isFile && $property->arrayItemType !== null) {
+            return 'array';
+        }
+
         if ($property->isFile) {
             return 'UploadedFileInterface';
         }
@@ -287,9 +296,10 @@ final class SchemaGenerator
     {
         $nullable = ($property->nullable || !$property->required) ? '|null' : '';
 
-        // Typed array (e.g., Pet[])
+        // Typed array (e.g., Pet[], UploadedFileInterface[])
         if ($property->arrayItemType !== null) {
-            return $property->arrayItemType . '[]' . $nullable;
+            $itemType = $property->isFile ? 'UploadedFileInterface' : $property->arrayItemType;
+            return $itemType . '[]' . $nullable;
         }
 
         // Map type (e.g., array<string, Pet>)

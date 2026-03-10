@@ -69,6 +69,13 @@ final class GenerateCommand extends Command
                 InputOption::VALUE_OPTIONAL,
                 'Output path for Yii2 route configuration (relative to base-dir)',
                 'config/routes.api.php',
+            )
+            ->addOption(
+                'route-prefix',
+                null,
+                InputOption::VALUE_OPTIONAL,
+                'Prefix for route targets (e.g. "api" for module routes like "api/controller/action")',
+                null,
             );
     }
 
@@ -92,6 +99,7 @@ final class GenerateCommand extends Command
             enumSubNamespace: $input->getOption('enum-ns'),
             controllerSubNamespace: $input->getOption('controller-ns'),
             routeFile: $input->getOption('route-file'),
+            routePrefix: $input->getOption('route-prefix'),
         );
 
         $io->title('PHP OpenAPI Server Generator');
