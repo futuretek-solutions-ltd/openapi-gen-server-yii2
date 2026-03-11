@@ -52,10 +52,17 @@ final class OpenApiParser
     {
         $specPath = $this->config->specPath;
 
-        if (str_ends_with($specPath, '.json')) {
-            $this->openApi = Reader::readFromJsonFile($specPath, OpenApi::class, ReferenceContext::RESOLVE_MODE_ALL);
-        } else {
-            $this->openApi = Reader::readFromYamlFile($specPath, OpenApi::class, ReferenceContext::RESOLVE_MODE_ALL);
+        // Suppress deprecation warnings emitted by cebe/php-openapi so they don't
+        // pollute output or trigger strict error handlers in consuming applications.
+        $prevErrorReporting = error_reporting(error_reporting() & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+        try {
+            if (str_ends_with($specPath, '.json')) {
+                $this->openApi = Reader::readFromJsonFile($specPath, OpenApi::class, ReferenceContext::RESOLVE_MODE_ALL);
+            } else {
+                $this->openApi = Reader::readFromYamlFile($specPath, OpenApi::class, ReferenceContext::RESOLVE_MODE_ALL);
+            }
+        } finally {
+            error_reporting($prevErrorReporting);
         }
 
         // Pre-index all component schemas/enums by their document position
