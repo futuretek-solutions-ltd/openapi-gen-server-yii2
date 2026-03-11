@@ -35,6 +35,13 @@ final class Generator
             return $result;
         }
 
+        // Clean target directories if requested
+        if ($this->config->cleanTargetDirs) {
+            $this->cleanDirectory($this->config->enumDir(), $result);
+            $this->cleanDirectory($this->config->schemaDir(), $result);
+            $this->cleanDirectory($this->config->controllerDir(), $result);
+        }
+
         // Parse OpenAPI spec
         $parser = new OpenApiParser($this->config, $result);
 
@@ -70,6 +77,30 @@ final class Generator
         $routeGenerator->generate($operations);
 
         return $result;
+    }
+
+    /**
+     * Remove all .php files from a directory.
+     *
+     * Only removes files in the immediate directory (non-recursive) to avoid
+     * accidentally deleting user code in subdirectories.
+     */
+    private function cleanDirectory(string $dir, GeneratorResult $result): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+
+        $files = glob($dir . DIRECTORY_SEPARATOR . '*.php');
+        if ($files === false) {
+            return;
+        }
+
+        foreach ($files as $file) {
+            if (is_file($file) && !unlink($file)) {
+                $result->addWarning("Failed to delete file during cleanup: $file");
+            }
+        }
     }
 }
 

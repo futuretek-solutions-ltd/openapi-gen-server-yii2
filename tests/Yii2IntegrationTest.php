@@ -2040,26 +2040,16 @@ test('[yii2] authorization denying specific controller returns 403', function ()
 // DefaultAuthentication behavior
 // ============================================================
 
-test('[yii2] DefaultAuthentication returns null when user component is not configured', function () {
-    // Create a minimal app without user component explicitly
-    // Note: Yii2 web apps have user as a core component, but we can test the class directly
+test('[yii2] DefaultAuthentication is pass-through and always returns null', function () {
     $auth = new \futuretek\openapi\Middleware\DefaultAuthentication();
 
-    // Remove Yii app to simulate no app context
-    $prevApp = \Yii::$app;
-    \Yii::$app = null;
-
-    try {
-        // With no app, isset(\Yii::$app->user) should fail gracefully
-        // This tests the guard clause
-        $result = $auth->authenticate('testOp', ['bearerAuth']);
-        expect($result)->toBeNull();
-    } finally {
-        \Yii::$app = $prevApp;
-    }
+    // Pass-through: returns null regardless of operation or security schemes
+    expect($auth->authenticate('testOp', ['bearerAuth']))->toBeNull();
+    expect($auth->authenticate('anotherOp', []))->toBeNull();
+    expect($auth->authenticate('createPet', ['apiKey', 'oauth2']))->toBeNull();
 });
 
-test('[yii2] DefaultAuthentication throws when user is not logged in', function () {
+test('[yii2] DefaultAuthentication does not throw when user is not logged in', function () {
     $auth = new \futuretek\openapi\Middleware\DefaultAuthentication();
 
     // Create app with user component configured with a dummy identity class
@@ -2084,11 +2074,9 @@ test('[yii2] DefaultAuthentication throws when user is not logged in', function 
             ],
         ],
     ]);
-    // Identity is null (not logged in)
-    expect(fn() => $auth->authenticate('testOp', ['bearerAuth']))->toThrow(
-        \RuntimeException::class,
-        'Not authenticated'
-    );
+    // Pass-through: does not check user identity, just returns null
+    $result = $auth->authenticate('testOp', ['bearerAuth']);
+    expect($result)->toBeNull();
 });
 
 // ============================================================

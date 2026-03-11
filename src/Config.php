@@ -28,6 +28,7 @@ final class Config
      * @param string $controllerSubNamespace Sub-namespace for generated controller interfaces (appended to $namespace)
      * @param string $routeFile Output path for the Yii2 route configuration file (relative to baseDir or absolute)
      * @param string|null $routePrefix Prefix for route targets (e.g. 'api' for module routes like 'api/controller/action'). If null, no prefix is added.
+     * @param bool $cleanTargetDirs Whether to clean (delete all .php files from) target directories for enums, schemas and contracts before generation.
      */
     public function __construct(
         public readonly string $specPath,
@@ -38,6 +39,7 @@ final class Config
         public readonly string $controllerSubNamespace = 'contracts',
         public readonly string $routeFile = 'config/routes.api.php',
         public readonly ?string $routePrefix = null,
+        public readonly bool $cleanTargetDirs = false,
     ) {}
 
     /**

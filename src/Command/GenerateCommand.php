@@ -76,6 +76,12 @@ final class GenerateCommand extends Command
                 InputOption::VALUE_OPTIONAL,
                 'Prefix for route targets (e.g. "api" for module routes like "api/controller/action")',
                 null,
+            )
+            ->addOption(
+                'clean',
+                null,
+                InputOption::VALUE_NONE,
+                'Clean (remove all .php files from) target directories for enums, schemas and contracts before generation',
             );
     }
 
@@ -105,6 +111,7 @@ final class GenerateCommand extends Command
             controllerSubNamespace: $trimQuotes($input->getOption('controller-ns')),
             routeFile: $trimQuotes($input->getOption('route-file')),
             routePrefix: $trimQuotes($routePrefix),
+            cleanTargetDirs: (bool)$input->getOption('clean'),
         );
 
         $io->title('PHP OpenAPI Server Generator');

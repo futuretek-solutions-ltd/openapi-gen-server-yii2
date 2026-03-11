@@ -1474,6 +1474,99 @@ test('optional primitive array request body generates nullable array', function 
     expect($interfaceFile)->toContain('@param int[] $body');
 });
 
+test('clean option removes old .php files from target directories before generation', function () {
+    // First, generate normally so directories and files are created
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
+        baseDir: $this->baseDir,
+        namespace: 'app\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+    expect($result->hasErrors())->toBeFalse();
+
+    // Place stale files in enum, schema and controller dirs
+    $staleEnumFile = $this->baseDir . '/api/enums/OldEnum.php';
+    $staleSchemaFile = $this->baseDir . '/api/schemas/OldSchema.php';
+    $staleContractFile = $this->baseDir . '/api/contracts/OldContract.php';
+
+    file_put_contents($staleEnumFile, '<?php // stale enum');
+    file_put_contents($staleSchemaFile, '<?php // stale schema');
+    file_put_contents($staleContractFile, '<?php // stale contract');
+
+    expect(file_exists($staleEnumFile))->toBeTrue();
+    expect(file_exists($staleSchemaFile))->toBeTrue();
+    expect(file_exists($staleContractFile))->toBeTrue();
+
+    // Re-generate with clean enabled
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
+        baseDir: $this->baseDir,
+        namespace: 'app\\api',
+        cleanTargetDirs: true,
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+    expect($result->hasErrors())->toBeFalse();
+
+    // Stale files should be removed
+    expect(file_exists($staleEnumFile))->toBeFalse();
+    expect(file_exists($staleSchemaFile))->toBeFalse();
+    expect(file_exists($staleContractFile))->toBeFalse();
+
+    // But freshly generated files should still exist
+    expect(file_exists($this->baseDir . '/api/enums/PetStatus.php'))->toBeTrue();
+    expect(file_exists($this->baseDir . '/api/schemas/Pet.php'))->toBeTrue();
+    expect(file_exists($this->baseDir . '/api/contracts/PetControllerInterface.php'))->toBeTrue();
+});
+
+test('generation without clean option preserves existing files', function () {
+    // First, generate normally
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
+        baseDir: $this->baseDir,
+        namespace: 'app\\api',
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    // Place a stale file
+    $staleFile = $this->baseDir . '/api/schemas/OldSchema.php';
+    file_put_contents($staleFile, '<?php // stale');
+
+    // Re-generate WITHOUT clean
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
+        baseDir: $this->baseDir,
+        namespace: 'app\\api',
+        cleanTargetDirs: false,
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    // Stale file should still exist
+    expect(file_exists($staleFile))->toBeTrue();
+});
+
+test('clean option does not fail when target directories do not exist', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
+        baseDir: $this->baseDir,
+        namespace: 'app\\api',
+        cleanTargetDirs: true,
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+    expect($result->hasWarnings())->toBeFalse();
+});
+
 
 
 
