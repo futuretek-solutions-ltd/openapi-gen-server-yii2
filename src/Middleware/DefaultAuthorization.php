@@ -11,7 +11,7 @@ namespace futuretek\openapi\Middleware;
  */
 class DefaultAuthorization implements AuthorizationInterface
 {
-    public function authorize(string $operationId, mixed $identity): bool
+    public function authorize(string $operationId, mixed $identity, string $controller): bool
     {
         return true;
     }

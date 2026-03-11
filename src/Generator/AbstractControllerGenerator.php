@@ -23,6 +23,8 @@ final class AbstractControllerGenerator
         private readonly GeneratorResult $result,
     ) {}
 
+    private const BUILTIN_TYPES = ['int', 'float', 'string', 'bool', 'array', 'object', 'mixed'];
+
     /** @var array<string, ParsedSchema> */
     private array $schemaIndex = [];
 
@@ -94,6 +96,8 @@ final class AbstractControllerGenerator
         $lines[] = '{';
 
         // Generate operationMeta
+        $lines[] = "    protected string \$controllerTag = '$controllerName';";
+        $lines[] = '';
         $lines[] = '    protected array $operationMeta = [';
 
         foreach ($operations as $op) {
@@ -101,9 +105,14 @@ final class AbstractControllerGenerator
 
             if ($op->requestBodyClass !== null) {
                 if ($op->requestBodyIsArray) {
-                    // Array body: reference the item class and mark as array
-                    $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;
-                    $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
+                    if (in_array($op->requestBodyClass, self::BUILTIN_TYPES, true)) {
+                        // Primitive array body: no DTO class needed
+                        $lines[] = "            'bodyType' => '{$op->requestBodyClass}',";
+                    } else {
+                        // Array body of DTOs: reference the item class
+                        $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;
+                        $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
+                    }
                     $lines[] = "            'bodyIsArray' => true,";
                 } else {
                     $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;

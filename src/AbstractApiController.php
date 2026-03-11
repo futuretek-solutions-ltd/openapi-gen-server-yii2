@@ -14,6 +14,7 @@ use futuretek\openapi\Middleware\DefaultLogger;
 use futuretek\openapi\Middleware\FileHandlerInterface;
 use futuretek\openapi\Middleware\LoggerInterface;
 use Psr\Http\Message\UploadedFileInterface;
+use yii\helpers\Json;
 use yii\web\Controller;
 use yii\web\Response;
 
@@ -59,6 +60,12 @@ abstract class AbstractApiController extends Controller
      * @var array<string, array>
      */
     protected array $operationMeta = [];
+
+    /**
+     * The controller/tag name for this controller.
+     * Set by the generated abstract controller.
+     */
+    protected string $controllerTag = '';
 
     private AuthenticationInterface $authentication;
     private AuthorizationInterface $authorization;
@@ -150,14 +157,25 @@ abstract class AbstractApiController extends Controller
             return true;
         }
 
+        $this->logger->info("Request: {$this->controllerTag}/$operationId ({$action->id})", [
+            'method' => \Yii::$app->request->getMethod(),
+            'url' => $_SERVER['REQUEST_URI'] ?? '(unknown)',
+            'contentType' => \Yii::$app->request->getContentType(),
+        ]);
+
         // Authentication
         $security = $meta['security'] ?? [];
         if (!empty($security)) {
             try {
                 $identity = $this->authentication->authenticate($operationId, $security);
-                $this->logger->info("Authenticated for $operationId", ['security' => $security]);
+                $this->logger->info("Authentication OK for $operationId", [
+                    'security' => $security,
+                    'identity' => $this->summarizeValue($identity),
+                ]);
             } catch (\Throwable $e) {
-                $this->logger->warning("Authentication failed for $operationId: {$e->getMessage()}");
+                $this->logger->warning("Authentication FAILED for $operationId: {$e->getMessage()}", [
+                    'security' => $security,
+                ]);
                 \Yii::$app->response->statusCode = 401;
                 \Yii::$app->response->format = Response::FORMAT_JSON;
                 \Yii::$app->response->data = ['error' => 'Unauthorized', 'message' => $e->getMessage()];
@@ -166,16 +184,23 @@ abstract class AbstractApiController extends Controller
 
             // Authorization
             try {
-                if (!$this->authorization->authorize($operationId, $identity)) {
+                if (!$this->authorization->authorize($operationId, $identity, $this->controllerTag)) {
                     throw new \RuntimeException('Forbidden');
                 }
+                $this->logger->info("Authorization OK for $operationId", [
+                    'controller' => $this->controllerTag,
+                ]);
             } catch (\Throwable $e) {
-                $this->logger->warning("Authorization failed for $operationId: {$e->getMessage()}");
+                $this->logger->warning("Authorization FAILED for $operationId: {$e->getMessage()}", [
+                    'controller' => $this->controllerTag,
+                ]);
                 \Yii::$app->response->statusCode = 403;
                 \Yii::$app->response->format = Response::FORMAT_JSON;
                 \Yii::$app->response->data = ['error' => 'Forbidden', 'message' => $e->getMessage()];
                 return false;
             }
+        } else {
+            $this->logger->info("No security for $operationId — skipping auth");
         }
 
         return true;
@@ -204,11 +229,21 @@ abstract class AbstractApiController extends Controller
         // Body parameter (always first if present)
         if (isset($meta['bodyClass'])) {
             $discriminator = $meta['discriminator'] ?? null;
-            $args[] = $this->deserializeBody($meta['bodyClass'], $meta['mediaType'] ?? 'application/json', $discriminator);
+            if (!empty($meta['bodyIsArray'])) {
+                $body = $this->deserializeArrayBody($meta['bodyClass'], $meta['mediaType'] ?? 'application/json');
+                $args[] = $body;
+            } else {
+                $body = $this->deserializeBody($meta['bodyClass'], $meta['mediaType'] ?? 'application/json', $discriminator);
+                $args[] = $body;
+            }
+        } elseif (isset($meta['bodyType']) && !empty($meta['bodyIsArray'])) {
+            $body = $this->deserializePrimitiveArrayBody($meta['bodyType'], $meta['mediaType'] ?? 'application/json');
+            $args[] = $body;
         }
 
         // Remaining parameters: path, query, header, cookie
         $paramsMeta = $meta['params'] ?? [];
+        $resolvedParams = [];
         foreach ($paramsMeta as $paramMeta) {
             $name = $paramMeta['name'];
             $in = $paramMeta['in'];
@@ -228,7 +263,12 @@ abstract class AbstractApiController extends Controller
             // Type cast
             $value = $this->castParameterValue($value, $type, $enumClass);
 
+            $resolvedParams[$name] = $this->summarizeValue($value);
             $args[] = $value;
+        }
+
+        if (!empty($resolvedParams)) {
+            $this->logger->info("Params for $operationId", $resolvedParams);
         }
 
         return $args;
@@ -243,9 +283,18 @@ abstract class AbstractApiController extends Controller
     {
         $operationId = $this->resolveOperationId($action->id);
 
-        if ($operationId !== null && is_object($result) && !($result instanceof Response)) {
+        if ($operationId !== null && $result !== null && !($result instanceof Response)) {
             \Yii::$app->response->format = Response::FORMAT_JSON;
-            $result = DataMapper::toArray($result);
+            $serialized = DataMapper::toArray($result);
+            $this->logger->info("Response: $operationId", [
+                'status' => \Yii::$app->response->statusCode,
+                'data' => $this->summarizeData($serialized),
+            ]);
+            $result = Json::encode($serialized);
+        } elseif ($operationId !== null && $result === null) {
+            $this->logger->info("Response: $operationId (void)", [
+                'status' => \Yii::$app->response->statusCode,
+            ]);
         }
 
         return parent::afterAction($action, $result);
@@ -276,12 +325,16 @@ abstract class AbstractApiController extends Controller
 
             if ($discriminatorValue !== null && isset($mapping[$discriminatorValue])) {
                 $dtoClass = $mapping[$discriminatorValue];
+                $this->logger->info("Discriminator resolved: $propName=$discriminatorValue → $dtoClass");
             } else {
                 $this->logger->warning("Discriminator property '$propName' value '$discriminatorValue' not found in mapping, using default class $dtoClass");
             }
         }
 
-        $this->logger->info("Deserialized request body for $dtoClass", ['mediaType' => $mediaType]);
+        $this->logger->info("Body deserialized → $dtoClass", [
+            'mediaType' => $mediaType,
+            'data' => $this->summarizeData($data),
+        ]);
 
         return DataMapper::toObject($data, $dtoClass);
     }
@@ -326,6 +379,11 @@ abstract class AbstractApiController extends Controller
                 $file = \yii\web\UploadedFile::getInstanceByName($propName);
                 if ($file !== null && $file->error !== UPLOAD_ERR_NO_FILE) {
                     $data[$propName] = $this->fileHandler->convertUploadedFile($file);
+                    $this->logger->info("File upload: $propName", [
+                        'name' => $file->name,
+                        'type' => $file->type,
+                        'size' => $file->size,
+                    ]);
                 }
             }
 
@@ -335,10 +393,19 @@ abstract class AbstractApiController extends Controller
                 $itemType = $arrayTypeAttrs[0]->newInstance()->of;
                 if ($itemType === UploadedFileInterface::class) {
                     $files = \yii\web\UploadedFile::getInstancesByName($propName);
+                    $validFiles = array_filter($files, fn($f) => $f->error !== UPLOAD_ERR_NO_FILE);
                     $data[$propName] = array_map(
                         fn($f) => $this->fileHandler->convertUploadedFile($f),
-                        array_filter($files, fn($f) => $f->error !== UPLOAD_ERR_NO_FILE),
+                        $validFiles,
                     );
+                    $this->logger->info("File upload (array): $propName", [
+                        'count' => count($validFiles),
+                        'files' => array_map(fn($f) => [
+                            'name' => $f->name,
+                            'type' => $f->type,
+                            'size' => $f->size,
+                        ], $validFiles),
+                    ]);
                 }
             }
         }
@@ -367,7 +434,137 @@ abstract class AbstractApiController extends Controller
             default => $value,
         };
     }
+
+    /**
+     * Deserialize a request body that is a JSON array of primitive values (e.g., int[], string[]).
+     *
+     * @param string $itemType The PHP scalar type of each item (int, float, string, bool, mixed)
+     */
+    private function deserializePrimitiveArrayBody(string $itemType, string $mediaType): array
+    {
+        $request = \Yii::$app->request;
+        $rawBody = $request->getRawBody();
+
+        if ($rawBody === '' || $rawBody === false) {
+            $this->logger->info("Empty primitive array body ({$itemType}[])");
+            return [];
+        }
+
+        $data = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
+
+        if (!is_array($data) || (!empty($data) && !array_is_list($data))) {
+            throw new \RuntimeException('Invalid JSON body: expected array');
+        }
+
+        $this->logger->info("Body deserialized → {$itemType}[]", [
+            'mediaType' => $mediaType,
+            'count' => count($data),
+            'data' => $this->summarizeData($data),
+        ]);
+
+        return array_map(fn($item) => $this->castParameterValue($item, $itemType, null), $data);
+    }
+
+    /**
+     * Deserialize a request body that is a JSON array of DTO objects.
+     *
+     * @param class-string $dtoClass The DTO class for each item
+     */
+    private function deserializeArrayBody(string $dtoClass, string $mediaType): array
+    {
+        $request = \Yii::$app->request;
+        $rawBody = $request->getRawBody();
+
+        if ($rawBody === '' || $rawBody === false) {
+            $this->logger->info("Empty array body ({$dtoClass}[])");
+            return [];
+        }
+
+        $data = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
+
+        if (!is_array($data) || (!empty($data) && !array_is_list($data))) {
+            throw new \RuntimeException('Invalid JSON body: expected array');
+        }
+
+        $this->logger->info("Body deserialized → {$dtoClass}[]", [
+            'mediaType' => $mediaType,
+            'count' => count($data),
+        ]);
+
+        return array_map(fn($item) => DataMapper::toObject($item, $dtoClass), $data);
+    }
+
+    /**
+     * Summarize data for logging: truncate large arrays/strings, mask files.
+     *
+     * @return array|string|mixed
+     */
+    private function summarizeData(mixed $data, int $maxItems = 5, int $maxStringLength = 200): mixed
+    {
+        if (is_array($data)) {
+            $isList = array_is_list($data);
+            $count = count($data);
+
+            if ($isList && $count > $maxItems) {
+                $summarized = array_map(
+                    fn($item) => $this->summarizeData($item, $maxItems, $maxStringLength),
+                    array_slice($data, 0, $maxItems),
+                );
+                $summarized[] = "... +" . ($count - $maxItems) . " more items (total: $count)";
+                return $summarized;
+            }
+
+            $result = [];
+            foreach ($data as $key => $value) {
+                $result[$key] = $this->summarizeData($value, $maxItems, $maxStringLength);
+            }
+            return $result;
+        }
+
+        if (is_string($data) && strlen($data) > $maxStringLength) {
+            return substr($data, 0, $maxStringLength) . '... (' . strlen($data) . ' chars)';
+        }
+
+        if ($data instanceof UploadedFileInterface) {
+            return '[File: ' . ($data->getClientFilename() ?? 'unknown') . ', ' . ($data->getSize() ?? '?') . ' bytes]';
+        }
+
+        return $data;
+    }
+
+    /**
+     * Summarize a single value for logging (used for params and identity).
+     */
+    private function summarizeValue(mixed $value): mixed
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if ($value instanceof UploadedFileInterface) {
+            return '[File: ' . ($value->getClientFilename() ?? 'unknown') . ', ' . ($value->getSize() ?? '?') . ' bytes]';
+        }
+
+        if ($value instanceof \BackedEnum) {
+            return $value->value;
+        }
+
+        if (is_object($value)) {
+            // For identity objects and DTOs, convert to array summary
+            if (method_exists($value, 'toArray')) {
+                return $this->summarizeData($value->toArray());
+            }
+            return '[' . get_class($value) . ']';
+        }
+
+        if (is_array($value)) {
+            return $this->summarizeData($value);
+        }
+
+        if (is_string($value) && strlen($value) > 200) {
+            return substr($value, 0, 200) . '... (' . strlen($value) . ' chars)';
+        }
+
+        return $value;
+    }
 }
-
-
-

@@ -90,16 +90,21 @@ final class GenerateCommand extends Command
         }
 
         $baseDir = $input->getOption('base-dir');
+        $routePrefix = $input->getOption('route-prefix');
+
+        // Trim surrounding quotes that may leak through from certain shells
+        // (e.g. --route-prefix='api' on Windows CMD passes literal "'api'")
+        $trimQuotes = static fn(?string $v): ?string => $v !== null ? trim($v, "\"'") : null;
 
         $config = new Config(
             specPath: $specPath,
             baseDir: $baseDir,
-            namespace: $input->getOption('namespace'),
-            schemaSubNamespace: $input->getOption('schema-ns'),
-            enumSubNamespace: $input->getOption('enum-ns'),
-            controllerSubNamespace: $input->getOption('controller-ns'),
-            routeFile: $input->getOption('route-file'),
-            routePrefix: $input->getOption('route-prefix'),
+            namespace: $trimQuotes($input->getOption('namespace')),
+            schemaSubNamespace: $trimQuotes($input->getOption('schema-ns')),
+            enumSubNamespace: $trimQuotes($input->getOption('enum-ns')),
+            controllerSubNamespace: $trimQuotes($input->getOption('controller-ns')),
+            routeFile: $trimQuotes($input->getOption('route-file')),
+            routePrefix: $trimQuotes($routePrefix),
         );
 
         $io->title('PHP OpenAPI Server Generator');

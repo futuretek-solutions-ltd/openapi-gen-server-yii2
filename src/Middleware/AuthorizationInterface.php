@@ -19,9 +19,10 @@ interface AuthorizationInterface
      *
      * @param string $operationId The OpenAPI operation ID being executed
      * @param mixed $identity The authenticated identity (from AuthenticationInterface)
+     * @param string $controller The controller/tag name handling the operation
      * @return bool True if authorized
      * @throws \RuntimeException If authorization fails
      */
-    public function authorize(string $operationId, mixed $identity): bool;
+    public function authorize(string $operationId, mixed $identity, string $controller): bool;
 }
 

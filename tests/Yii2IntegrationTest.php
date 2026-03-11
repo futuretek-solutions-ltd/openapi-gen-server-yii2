@@ -147,6 +147,9 @@ function intMakePetController(string $ns): string
         . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
         . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
 
+        // Override authentication to pass-through for testing
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new class implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["testUser" => true]; } }; }'
+
         // listPets: returns a PetListResponse with filtered list
         . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse {'
         . '   $resp = new \\' . $ns . '\\schemas\\PetListResponse();'
@@ -568,6 +571,101 @@ test('[yii2] array request body generates bodyIsArray with correct item class', 
     expect($interfaceFile)->not->toContain('\\array');
 });
 
+// --- Primitive array request body ---
+
+test('[yii2] primitive array request body (int[]) generates bodyType meta without wrapper DTO', function () {
+    $spec = json_encode([
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/notifications/set-sent' => [
+                'post' => [
+                    'operationId' => 'setSentNotifications',
+                    'tags' => ['Notification'],
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'array',
+                                    'items' => ['type' => 'integer'],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'responses' => ['200' => ['description' => 'OK']],
+                ],
+            ],
+        ],
+    ]);
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($this->baseDir . '/spec.json', $spec);
+    intGen(realpath($this->baseDir . '/spec.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractNotificationController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+
+    // Should use bodyType instead of bodyClass for primitive arrays
+    expect($meta['setSentNotifications'])->toHaveKey('bodyType');
+    expect($meta['setSentNotifications']['bodyType'])->toBe('int');
+    expect($meta['setSentNotifications'])->not->toHaveKey('bodyClass');
+    expect($meta['setSentNotifications']['bodyIsArray'])->toBeTrue();
+    expect($meta['setSentNotifications']['bodyRequired'])->toBeTrue();
+
+    // No wrapper DTO should exist
+    expect(file_exists($this->baseDir . '/' . $this->nsPath . '/schemas/SetSentNotificationsRequestItem.php'))->toBeFalse();
+
+    $interfaceFile = file_get_contents(
+        $this->baseDir . '/' . $this->nsPath . '/contracts/NotificationControllerInterface.php',
+    );
+    expect($interfaceFile)->toContain('array $body');
+    expect($interfaceFile)->toContain('@param int[] $body');
+});
+
+test('[yii2] primitive array request body (string[]) generates bodyType meta', function () {
+    $spec = json_encode([
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/tags' => [
+                'post' => [
+                    'operationId' => 'addTags',
+                    'tags' => ['Tag'],
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'array',
+                                    'items' => ['type' => 'string'],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'responses' => ['200' => ['description' => 'OK']],
+                ],
+            ],
+        ],
+    ]);
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($this->baseDir . '/spec.json', $spec);
+    intGen(realpath($this->baseDir . '/spec.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractTagController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+
+    expect($meta['addTags']['bodyType'])->toBe('string');
+    expect($meta['addTags'])->not->toHaveKey('bodyClass');
+    expect($meta['addTags']['bodyIsArray'])->toBeTrue();
+
+    $interfaceFile = file_get_contents(
+        $this->baseDir . '/' . $this->nsPath . '/contracts/TagControllerInterface.php',
+    );
+    expect($interfaceFile)->toContain('@param string[] $body');
+});
+
 // --- Module namespace ---
 
 test('[yii2] module namespace generates correct directory structure', function () {
@@ -669,8 +767,9 @@ test('[yii2] JSON body is deserialized into typed DTO and passed to action', fun
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('create-pet', []);
 
-    // afterAction serializes the DTO to an array
-    expect($result)->toBeArray();
+    // afterAction serializes the DTO to a JSON string
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['id'])->toBe('new-123');
     expect($result['name'])->toBe('Buddy');
     expect($result['status'])->toBe('available');
@@ -688,7 +787,8 @@ test('[yii2] path parameter is passed to action via runAction params', function 
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('get-pet', ['petId' => 'abc-999']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['id'])->toBe('abc-999');
     expect($result['name'])->toBe('Pet-abc-999');
     expect($result['status'])->toBe('available');
@@ -706,7 +806,8 @@ test('[yii2] query parameters are bound and type-cast', function () {
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['total'])->toBe(5); // limit was cast from string '5' to int 5
 });
 
@@ -749,7 +850,8 @@ test('[yii2] enum query parameter is resolved via tryFrom', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['total'])->toBe(200); // pending → 200
 });
 
@@ -765,7 +867,8 @@ test('[yii2] body + path params are bound together on update', function () {
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('update-pet', ['petId' => 'pet-42']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['id'])->toBe('pet-42');
     expect($result['name'])->toBe('Updated');
     expect($result['status'])->toBe('sold');
@@ -785,8 +888,9 @@ test('[yii2] response DTO is serialized to JSON array by afterAction', function 
 
     // afterAction should have set response format to JSON
     expect($app->response->format)->toBe(\yii\web\Response::FORMAT_JSON);
-    // Result should be a plain array (serialized by DataMapper)
-    expect($result)->toBeArray();
+    // Result should be a JSON-encoded string (serialized by DataMapper + Json::encode)
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect(array_key_exists('id', $result))->toBeTrue();
     expect(array_key_exists('name', $result))->toBeTrue();
     expect(array_key_exists('status', $result))->toBeTrue();
@@ -855,7 +959,7 @@ test('[yii2] authorization failure returns 403', function () {
     $authCls = 'PassAuth_' . str_replace('.', '_', uniqid('', true));
     eval('class ' . $authCls . ' implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["userId" => 1]; } }');
     $authzCls = 'DenyAuthz_' . str_replace('.', '_', uniqid('', true));
-    eval('class ' . $authzCls . ' implements \\futuretek\\openapi\\Middleware\\AuthorizationInterface { public function authorize(string $operationId, mixed $identity): bool { return false; } }');
+    eval('class ' . $authzCls . ' implements \\futuretek\\openapi\\Middleware\\AuthorizationInterface { public function authorize(string $operationId, mixed $identity, string $controller): bool { return false; } }');
 
     $ctrlCls = 'AuthzFailCtrl_' . str_replace('.', '_', uniqid('', true));
     eval(
@@ -917,7 +1021,8 @@ test('[yii2] successful auth allows action through', function () {
     $result = $controller->runAction('create-pet', []);
 
     // Auth succeeded, action ran
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['id'])->toBe('auth-ok');
     expect($result['name'])->toBe('Authenticated');
 });
@@ -956,7 +1061,8 @@ test('[yii2] no-security action skips auth entirely', function () {
     // listPets has no security — auth should not be called
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['total'])->toBe(42);
 });
 
@@ -991,7 +1097,8 @@ test('[yii2] header parameter is extracted from request', function () {
     $controller = new $cls('item', $app);
     $result = $controller->runAction('list-items', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['total'])->toBe(strlen('req-abc-12345'));
 });
 
@@ -1008,7 +1115,8 @@ test('[yii2] default query parameter value is used when not provided', function 
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['total'])->toBe(20); // default limit
 });
 
@@ -1048,7 +1156,8 @@ test('[yii2] nested DTO in response is fully serialized', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('get-pet', ['petId' => 'nested-1']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['id'])->toBe('nested-1');
     expect($result['category'])->toBeArray();
     expect($result['category']['id'])->toBe(5);
@@ -1092,7 +1201,8 @@ test('[yii2] list response with DTO items is fully serialized', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['total'])->toBe(2);
     expect($result['items'])->toBeArray()->toHaveCount(2);
     expect($result['items'][0]['id'])->toBe('1');
@@ -1122,7 +1232,8 @@ test('[yii2] runAction via app routes full end-to-end', function () {
 
     $result = $app->runAction('pet/create-pet', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['id'])->toBe('new-123');
     expect($result['name'])->toBe('E2E-Pet');
     expect($result['status'])->toBe('pending');
@@ -1149,6 +1260,7 @@ test('[yii2] single file upload via multipart/form-data converts to UploadedFile
         'class ' . $cls
         . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
         . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new class implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["testUser" => true]; } }; }'
         . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
         . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
         . ' public function actionGetPet(string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
@@ -1183,7 +1295,8 @@ test('[yii2] single file upload via multipart/form-data converts to UploadedFile
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-photo-1']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['id'])->toBe('pet-photo-1');
     expect($result['name'])->toBe('file:cat.jpg:18');
 
@@ -1205,6 +1318,7 @@ test('[yii2] file upload with UPLOAD_ERR_NO_FILE is skipped', function () {
         'class ' . $cls
         . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
         . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new class implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["testUser" => true]; } }; }'
         . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
         . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
         . ' public function actionGetPet(string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
@@ -1235,7 +1349,8 @@ test('[yii2] file upload with UPLOAD_ERR_NO_FILE is skipped', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-nofile']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['name'])->toBe('photo-not-set');
 });
 
@@ -1255,6 +1370,7 @@ test('[yii2] mixed form data and file fields in multipart request', function () 
         'class ' . $cls
         . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
         . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new class implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["testUser" => true]; } }; }'
         . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
         . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
         . ' public function actionGetPet(string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
@@ -1287,7 +1403,8 @@ test('[yii2] mixed form data and file fields in multipart request', function () 
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-mixed']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['name'])->toBe('file-ok|caption:A nice caption');
 
     if (file_exists($tmpFile)) {
@@ -1311,6 +1428,7 @@ test('[yii2] single file upload getStream returns correct content', function () 
         'class ' . $cls
         . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
         . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new class implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["testUser" => true]; } }; }'
         . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
         . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
         . ' public function actionGetPet(string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
@@ -1342,7 +1460,8 @@ test('[yii2] single file upload getStream returns correct content', function () 
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-stream']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['name'])->toBe('stream verification content');
 
     if (file_exists($tmpFile)) {
@@ -1401,7 +1520,8 @@ test('[yii2] array of files upload via multipart/form-data converts to UploadedF
     $controller = new $cls('upload', $app);
     $result = $controller->runAction('upload-multiple-files', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['uploadedCount'])->toBe(3);
     expect($result['message'])->toBe('doc1.txt:16,doc2.pdf:21,doc3.bin:5');
 
@@ -1450,7 +1570,8 @@ test('[yii2] array of files skips entries with UPLOAD_ERR_NO_FILE', function () 
     $controller = new $cls('upload', $app);
     $result = $controller->runAction('upload-multiple-files', []);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     // Only 1 file should be included (2 are UPLOAD_ERR_NO_FILE)
     expect($result['uploadedCount'])->toBe(1);
 
@@ -1476,6 +1597,7 @@ test('[yii2] file upload getStream reads binary content correctly', function () 
         'class ' . $cls
         . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
         . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new class implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["testUser" => true]; } }; }'
         . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
         . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
         . ' public function actionGetPet(string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
@@ -1508,7 +1630,8 @@ test('[yii2] file upload getStream reads binary content correctly', function () 
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-binary']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['name'])->toBe('106:000102fffefd');
 
     if (file_exists($tmpFile)) {
@@ -1550,6 +1673,7 @@ test('[yii2] file upload with custom FileHandler implementation', function () {
         'class ' . $cls
         . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
         . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new class implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["testUser" => true]; } }; }'
         . ' protected function createFileHandler(): \\futuretek\\openapi\\Middleware\\FileHandlerInterface { return new \\' . $handlerCls . '(); }'
         . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
         . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
@@ -1580,7 +1704,8 @@ test('[yii2] file upload with custom FileHandler implementation', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-custom']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['name'])->toBe('custom_original.jpg');
 
     if (file_exists($tmpFile)) {
@@ -1603,6 +1728,7 @@ test('[yii2] multipart file upload metadata is preserved through pipeline', func
         'class ' . $cls
         . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
         . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new class implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["testUser" => true]; } }; }'
         . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
         . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
         . ' public function actionGetPet(string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
@@ -1638,11 +1764,435 @@ test('[yii2] multipart file upload metadata is preserved through pipeline', func
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-meta']);
 
-    expect($result)->toBeArray();
+    expect($result)->toBeString();
+    $result = json_decode($result, true);
     expect($result['name'])->toBe('name:report.pdf|type:application/pdf|size:13|error:0');
 
     if (file_exists($tmpFile)) {
         unlink($tmpFile);
     }
 });
+
+// ============================================================
+// Security inheritance from root-level
+// ============================================================
+
+test('[yii2] root-level security is inherited by operations without own security', function () {
+    intGen(realpath(__DIR__ . '/fixtures/security_inheritance.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    // listItems has no operation-level security → should inherit root bearerAuth
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractItemController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+    expect($meta['listItems']['security'])->toBe(['bearerAuth']);
+});
+
+test('[yii2] operation-level security overrides root-level security', function () {
+    intGen(realpath(__DIR__ . '/fixtures/security_inheritance.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    // createItem has own security: apiKey → should NOT have bearerAuth
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractItemController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+    expect($meta['createItem']['security'])->toBe(['apiKey']);
+    expect($meta['createItem']['security'])->not->toContain('bearerAuth');
+});
+
+test('[yii2] operation with security: [] explicitly opts out of root security', function () {
+    intGen(realpath(__DIR__ . '/fixtures/security_inheritance.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    // listPublicItems has security: [] → explicitly opts out, no security
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractItemController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+    expect($meta['listPublicItems'])->not->toHaveKey('security');
+});
+
+test('[yii2] multiple operations across controllers inherit root security', function () {
+    intGen(realpath(__DIR__ . '/fixtures/security_inheritance.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    // getSettings (Admin controller) has no own security → inherits root bearerAuth
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractAdminController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+    expect($meta['getSettings']['security'])->toBe(['bearerAuth']);
+});
+
+test('[yii2] operation with multiple security schemes overrides root', function () {
+    intGen(realpath(__DIR__ . '/fixtures/security_inheritance.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    // updateSettings has own security with bearerAuth + adminToken
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractAdminController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+    expect($meta['updateSettings']['security'])->toBe(['bearerAuth', 'adminToken']);
+});
+
+test('[yii2] spec without root security: operations without own security have no security', function () {
+    // petstore.json has no root-level security
+    intGen(realpath(__DIR__ . '/fixtures/petstore.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractPetController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+
+    // listPets has no operation security and no root security → no security
+    expect($meta['listPets'])->not->toHaveKey('security');
+
+    // getPet also has no security
+    expect($meta['getPet'])->not->toHaveKey('security');
+
+    // createPet has operation-level bearerAuth → should still have it
+    expect($meta['createPet']['security'])->toBe(['bearerAuth']);
+});
+
+test('[yii2] inherited root security triggers authentication on beforeAction', function () {
+    intGen(realpath(__DIR__ . '/fixtures/security_inheritance.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ns = $this->ns;
+    // Auth that always throws
+    $authCls = 'InheritedAuthFail_' . str_replace('.', '_', uniqid('', true));
+    eval('class ' . $authCls . ' implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { throw new \\RuntimeException("Auth required"); } }');
+
+    $ctrlCls = 'InheritedAuthCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlCls
+        . ' extends \\' . $ns . '\\contracts\\AbstractAdminController'
+        . ' implements \\' . $ns . '\\contracts\\AdminControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new \\' . $authCls . '(); }'
+        . ' public function actionGetSettings(): \\' . $ns . '\\schemas\\GetSettingsResponse200 { return new \\' . $ns . '\\schemas\\GetSettingsResponse200(); }'
+        . ' public function actionUpdateSettings(\\' . $ns . '\\schemas\\SettingsUpdate $body): void {}'
+        . '}'
+    );
+
+    $app = intApp();
+    intRequest($app, 'GET');
+
+    $controller = new $ctrlCls('admin', $app);
+    // getSettings inherits bearerAuth from root → auth should be called and fail
+    $result = $controller->runAction('get-settings', []);
+
+    expect($app->response->statusCode)->toBe(401);
+    expect($app->response->data['error'])->toBe('Unauthorized');
+    expect($app->response->data['message'])->toBe('Auth required');
+});
+
+test('[yii2] opted-out operation (security: []) skips auth even with root security', function () {
+    intGen(realpath(__DIR__ . '/fixtures/security_inheritance.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ns = $this->ns;
+    // Auth that would always fail
+    $authCls = 'BoomAuth2_' . str_replace('.', '_', uniqid('', true));
+    eval('class ' . $authCls . ' implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { throw new \\RuntimeException("Should not be called"); } }');
+
+    $ctrlCls = 'PublicItemCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlCls
+        . ' extends \\' . $ns . '\\contracts\\AbstractItemController'
+        . ' implements \\' . $ns . '\\contracts\\ItemControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new \\' . $authCls . '(); }'
+        . ' public function actionListItems(): \\' . $ns . '\\schemas\\ListItemsResponse200 { $r = new \\' . $ns . '\\schemas\\ListItemsResponse200(); return $r; }'
+        . ' public function actionCreateItem(\\' . $ns . '\\schemas\\CreateItemRequest $body): \\' . $ns . '\\schemas\\ItemResponse { return new \\' . $ns . '\\schemas\\ItemResponse(); }'
+        . ' public function actionListPublicItems(): \\' . $ns . '\\schemas\\ListPublicItemsResponse200 { $r = new \\' . $ns . '\\schemas\\ListPublicItemsResponse200(); return $r; }'
+        . '}'
+    );
+
+    $app = intApp();
+    intRequest($app, 'GET');
+
+    $controller = new $ctrlCls('item', $app);
+    // listPublicItems has security: [] → auth should NOT be called
+    $result = $controller->runAction('list-public-items', []);
+
+    // Should succeed (no 401)
+    expect($app->response->statusCode)->not->toBe(401);
+});
+
+// ============================================================
+// Authorization with controller param
+// ============================================================
+
+test('[yii2] authorization receives controller/tag name', function () {
+    intGen(realpath(__DIR__ . '/fixtures/petstore.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ns = $this->ns;
+    // Auth that passes
+    $authCls = 'PassAuth2_' . str_replace('.', '_', uniqid('', true));
+    eval('class ' . $authCls . ' implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["userId" => 1]; } }');
+
+    // Authz that captures the controller name
+    $authzCls = 'CaptureAuthz_' . str_replace('.', '_', uniqid('', true));
+    eval('class ' . $authzCls . ' implements \\futuretek\\openapi\\Middleware\\AuthorizationInterface {
+        public static string $capturedController = "";
+        public static string $capturedOperationId = "";
+        public function authorize(string $operationId, mixed $identity, string $controller): bool {
+            self::$capturedController = $controller;
+            self::$capturedOperationId = $operationId;
+            return true;
+        }
+    }');
+
+    $ctrlCls = 'AuthzTagCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlCls
+        . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
+        . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new \\' . $authCls . '(); }'
+        . ' protected function createAuthorization(): \\futuretek\\openapi\\Middleware\\AuthorizationInterface { return new \\' . $authzCls . '(); }'
+        . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
+        . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
+        . ' public function actionGetPet(string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
+        . ' public function actionUpdatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body, string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
+        . ' public function actionDeletePet(string $petId): void {}'
+        . ' public function actionUploadPetPhoto(\\' . $ns . '\\schemas\\PetPhotoUpload $body, string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
+        . '}'
+    );
+
+    $app = intApp();
+    intRequest($app, 'POST', json_encode(['name' => 'Test', 'status' => 'available']));
+
+    $controller = new $ctrlCls('pet', $app);
+    $controller->runAction('create-pet', []);
+
+    // Verify the controller name was passed to authorize
+    expect($authzCls::$capturedController)->toBe('Pet');
+    expect($authzCls::$capturedOperationId)->toBe('createPet');
+});
+
+test('[yii2] controllerTag is set in generated abstract controller', function () {
+    intGen(realpath(__DIR__ . '/fixtures/petstore.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractPetController");
+    $defaults = $ref->getDefaultProperties();
+    expect($defaults['controllerTag'])->toBe('Pet');
+});
+
+test('[yii2] controllerTag for different controllers matches their names', function () {
+    intGen(realpath(__DIR__ . '/fixtures/security_inheritance.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $adminRef = new ReflectionClass("{$this->ns}\\contracts\\AbstractAdminController");
+    expect($adminRef->getDefaultProperties()['controllerTag'])->toBe('Admin');
+
+    $itemRef = new ReflectionClass("{$this->ns}\\contracts\\AbstractItemController");
+    expect($itemRef->getDefaultProperties()['controllerTag'])->toBe('Item');
+});
+
+test('[yii2] authorization denying specific controller returns 403', function () {
+    intGen(realpath(__DIR__ . '/fixtures/petstore.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ns = $this->ns;
+    $authCls = 'PassAuth3_' . str_replace('.', '_', uniqid('', true));
+    eval('class ' . $authCls . ' implements \\futuretek\\openapi\\Middleware\\AuthenticationInterface { public function authenticate(string $operationId, array $securitySchemes): mixed { return ["userId" => 1]; } }');
+
+    // Authz that denies Pet controller
+    $authzCls = 'DenyPetAuthz_' . str_replace('.', '_', uniqid('', true));
+    eval('class ' . $authzCls . ' implements \\futuretek\\openapi\\Middleware\\AuthorizationInterface {
+        public function authorize(string $operationId, mixed $identity, string $controller): bool {
+            return $controller !== "Pet";
+        }
+    }');
+
+    $ctrlCls = 'DenyPetCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlCls
+        . ' extends \\' . $ns . '\\contracts\\AbstractPetController'
+        . ' implements \\' . $ns . '\\contracts\\PetControllerInterface {'
+        . ' protected function createAuthentication(): \\futuretek\\openapi\\Middleware\\AuthenticationInterface { return new \\' . $authCls . '(); }'
+        . ' protected function createAuthorization(): \\futuretek\\openapi\\Middleware\\AuthorizationInterface { return new \\' . $authzCls . '(); }'
+        . ' public function actionListPets(?int $limit = 20, ?\\' . $ns . '\\enums\\PetStatus $status = null): \\' . $ns . '\\schemas\\PetListResponse { return new \\' . $ns . '\\schemas\\PetListResponse(); }'
+        . ' public function actionCreatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
+        . ' public function actionGetPet(string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
+        . ' public function actionUpdatePet(\\' . $ns . '\\schemas\\CreatePetRequest $body, string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
+        . ' public function actionDeletePet(string $petId): void {}'
+        . ' public function actionUploadPetPhoto(\\' . $ns . '\\schemas\\PetPhotoUpload $body, string $petId): \\' . $ns . '\\schemas\\Pet { return new \\' . $ns . '\\schemas\\Pet(); }'
+        . '}'
+    );
+
+    $app = intApp();
+    intRequest($app, 'DELETE');
+
+    $controller = new $ctrlCls('pet', $app);
+    $result = $controller->runAction('delete-pet', ['petId' => 'x']);
+
+    expect($app->response->statusCode)->toBe(403);
+    expect($app->response->data['error'])->toBe('Forbidden');
+});
+
+// ============================================================
+// DefaultAuthentication behavior
+// ============================================================
+
+test('[yii2] DefaultAuthentication returns null when user component is not configured', function () {
+    // Create a minimal app without user component explicitly
+    // Note: Yii2 web apps have user as a core component, but we can test the class directly
+    $auth = new \futuretek\openapi\Middleware\DefaultAuthentication();
+
+    // Remove Yii app to simulate no app context
+    $prevApp = \Yii::$app;
+    \Yii::$app = null;
+
+    try {
+        // With no app, isset(\Yii::$app->user) should fail gracefully
+        // This tests the guard clause
+        $result = $auth->authenticate('testOp', ['bearerAuth']);
+        expect($result)->toBeNull();
+    } finally {
+        \Yii::$app = $prevApp;
+    }
+});
+
+test('[yii2] DefaultAuthentication throws when user is not logged in', function () {
+    $auth = new \futuretek\openapi\Middleware\DefaultAuthentication();
+
+    // Create app with user component configured with a dummy identity class
+    if (\Yii::$app !== null) {
+        \Yii::$app = null;
+    }
+    new \yii\web\Application([
+        'id' => 'test-app',
+        'basePath' => sys_get_temp_dir(),
+        'components' => [
+            'request' => [
+                'class' => \yii\web\Request::class,
+                'enableCookieValidation' => false,
+                'enableCsrfCookie' => false,
+                'scriptUrl' => '',
+            ],
+            'response' => ['class' => \yii\web\Response::class],
+            'user' => [
+                'class' => \yii\web\User::class,
+                'identityClass' => \yii\web\IdentityInterface::class,
+                'enableSession' => false,
+            ],
+        ],
+    ]);
+    // Identity is null (not logged in)
+    expect(fn() => $auth->authenticate('testOp', ['bearerAuth']))->toThrow(
+        \RuntimeException::class,
+        'Not authenticated'
+    );
+});
+
+// ============================================================
+// DefaultAuthorization behavior
+// ============================================================
+
+test('[yii2] DefaultAuthorization always returns true (pass-through)', function () {
+    $authz = new \futuretek\openapi\Middleware\DefaultAuthorization();
+
+    expect($authz->authorize('listPets', ['userId' => 1], 'Pet'))->toBeTrue();
+    expect($authz->authorize('createPet', null, 'Pet'))->toBeTrue();
+    expect($authz->authorize('getSettings', ['admin' => true], 'Admin'))->toBeTrue();
+    expect($authz->authorize('anyOperation', 'user-string', ''))->toBeTrue();
+});
+
+test('[yii2] DefaultAuthorization accepts controller parameter', function () {
+    $authz = new \futuretek\openapi\Middleware\DefaultAuthorization();
+
+    // Ensure the method signature accepts all three parameters without error
+    $result = $authz->authorize('testOp', ['id' => 1], 'TestController');
+    expect($result)->toBeTrue();
+});
+
+// ============================================================
+// Security inheritance: inline spec tests
+// ============================================================
+
+test('[yii2] inline spec with root security: inherited operations get security in meta', function () {
+    $spec = json_encode([
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'security' => [['bearerAuth' => []]],
+        'paths' => [
+            '/things' => [
+                'get' => [
+                    'operationId' => 'listThings',
+                    'tags' => ['Thing'],
+                    'responses' => ['200' => ['description' => 'OK']],
+                ],
+                'post' => [
+                    'operationId' => 'createThing',
+                    'tags' => ['Thing'],
+                    'security' => [['apiKey' => []]],
+                    'responses' => ['201' => ['description' => 'Created']],
+                ],
+                'delete' => [
+                    'operationId' => 'deleteAllThings',
+                    'tags' => ['Thing'],
+                    'security' => [],
+                    'responses' => ['204' => ['description' => 'Deleted']],
+                ],
+            ],
+        ],
+        'components' => [
+            'securitySchemes' => [
+                'bearerAuth' => ['type' => 'http', 'scheme' => 'bearer'],
+                'apiKey' => ['type' => 'apiKey', 'in' => 'header', 'name' => 'X-API-Key'],
+            ],
+        ],
+    ]);
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($this->baseDir . '/spec.json', $spec);
+    intGen(realpath($this->baseDir . '/spec.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractThingController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+
+    // listThings: no own security → inherits bearerAuth from root
+    expect($meta['listThings']['security'])->toBe(['bearerAuth']);
+
+    // createThing: own security apiKey → overrides root
+    expect($meta['createThing']['security'])->toBe(['apiKey']);
+
+    // deleteAllThings: security: [] → explicitly opts out
+    expect($meta['deleteAllThings'])->not->toHaveKey('security');
+});
+
+test('[yii2] spec without root security: operations without own security have empty security', function () {
+    $spec = json_encode([
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/open' => [
+                'get' => [
+                    'operationId' => 'openEndpoint',
+                    'tags' => ['Open'],
+                    'responses' => ['200' => ['description' => 'OK']],
+                ],
+            ],
+        ],
+    ]);
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($this->baseDir . '/spec.json', $spec);
+    intGen(realpath($this->baseDir . '/spec.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractOpenController");
+    $meta = $ref->getDefaultProperties()['operationMeta'];
+
+    // No root security, no operation security → no security key in meta
+    expect($meta['openEndpoint'])->not->toHaveKey('security');
+});
+
 

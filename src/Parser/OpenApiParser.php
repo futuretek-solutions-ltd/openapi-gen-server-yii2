@@ -40,6 +40,9 @@ final class OpenApiParser
     /** @var array<string, string> Known component enum names by document position pointer */
     private array $knownEnumPointers = [];
 
+    /** @var string[] Root-level security scheme names (inherited by operations that don't define their own) */
+    private array $globalSecurity = [];
+
     public function __construct(
         private readonly Config $config,
         private readonly GeneratorResult $result,
@@ -67,6 +70,7 @@ final class OpenApiParser
 
         // Pre-index all component schemas/enums by their document position
         $this->indexComponentSchemas();
+        $this->parseGlobalSecurity();
         $this->parseSchemas();
         $this->parsePaths();
     }
@@ -523,6 +527,21 @@ final class OpenApiParser
     }
 
     /**
+     * Parse root-level security requirements (inherited by operations without their own security).
+     */
+    private function parseGlobalSecurity(): void
+    {
+        if ($this->openApi->security !== null) {
+            $secData = $this->openApi->security->getSerializableData();
+            foreach ($secData as $requirementObj) {
+                foreach ($requirementObj as $schemeName => $scopes) {
+                    $this->globalSecurity[] = $schemeName;
+                }
+            }
+        }
+    }
+
+    /**
      * Parse all paths and operations.
      */
     private function parsePaths(): void
@@ -630,13 +649,20 @@ final class OpenApiParser
                         $requestBodyIsArray = true;
                         $items = $schema->items;
                         if ($items instanceof Schema) {
-                            $itemComponentName = $this->getComponentSchemaName($items);
-                            if ($itemComponentName !== null) {
-                                $requestBodyClass = $itemComponentName;
+                            // Primitive scalar items (int[], string[], etc.) — no DTO needed
+                            if (in_array($items->type, ['integer', 'number', 'string', 'boolean'], true)
+                                && empty($items->properties) && $items->allOf === null
+                            ) {
+                                $requestBodyClass = $this->resolvePhpType($items);
                             } else {
-                                $inlineName = ucfirst($operationId) . 'RequestItem';
-                                $this->resolveSchemaReference($items, $inlineName);
-                                $requestBodyClass = $inlineName;
+                                $itemComponentName = $this->getComponentSchemaName($items);
+                                if ($itemComponentName !== null) {
+                                    $requestBodyClass = $itemComponentName;
+                                } else {
+                                    $inlineName = ucfirst($operationId) . 'RequestItem';
+                                    $this->resolveSchemaReference($items, $inlineName);
+                                    $requestBodyClass = $inlineName;
+                                }
                             }
                         } elseif ($items instanceof Reference) {
                             $requestBodyClass = $this->extractRefName($items->getJsonReference()->getJsonPointer()->getPointer());
@@ -678,7 +704,9 @@ final class OpenApiParser
             }
         }
 
-        // Security
+        // Security: operation-level overrides root-level.
+        // If operation has no security key (null), inherit from root.
+        // If operation has security: [] (empty), it explicitly opts out.
         $security = [];
         if ($operation->security !== null) {
             $secData = $operation->security->getSerializableData();
@@ -687,6 +715,9 @@ final class OpenApiParser
                     $security[] = $schemeName;
                 }
             }
+        } else {
+            // Inherit from root-level security
+            $security = $this->globalSecurity;
         }
 
         $this->operations[] = new ParsedOperation(

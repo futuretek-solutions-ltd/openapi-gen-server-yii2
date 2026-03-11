@@ -1084,6 +1084,59 @@ test('routes have no prefix when routePrefix is null', function () {
     expect($routes['POST pets'])->toBe('pet/create-pet');
 });
 
+test('GenerateCommand trims surrounding quotes from route-prefix option', function () {
+    $command = new \futuretek\openapi\Command\GenerateCommand();
+    $tester = new \Symfony\Component\Console\Tester\CommandTester($command);
+
+    $tester->execute([
+        'spec' => realpath(__DIR__ . '/fixtures/petstore.json'),
+        '--base-dir' => $this->baseDir,
+        '--route-prefix' => "'api'",
+    ]);
+
+    expect($tester->getStatusCode())->toBe(0);
+
+    $routes = require $this->baseDir . '/config/routes.api.php';
+    // Should be 'api/pet/list-pets', not "'api'/pet/list-pets"
+    expect($routes['GET pets'])->toBe('api/pet/list-pets');
+    expect($routes['GET pets'])->not->toContain("'");
+});
+
+test('GenerateCommand trims double quotes from route-prefix option', function () {
+    $command = new \futuretek\openapi\Command\GenerateCommand();
+    $tester = new \Symfony\Component\Console\Tester\CommandTester($command);
+
+    $tester->execute([
+        'spec' => realpath(__DIR__ . '/fixtures/petstore.json'),
+        '--base-dir' => $this->baseDir,
+        '--route-prefix' => '"api"',
+    ]);
+
+    expect($tester->getStatusCode())->toBe(0);
+
+    $routes = require $this->baseDir . '/config/routes.api.php';
+    expect($routes['GET pets'])->toBe('api/pet/list-pets');
+    expect($routes['GET pets'])->not->toContain('"');
+});
+
+test('GenerateCommand trims quotes from namespace option', function () {
+    $command = new \futuretek\openapi\Command\GenerateCommand();
+    $tester = new \Symfony\Component\Console\Tester\CommandTester($command);
+
+    $tester->execute([
+        'spec' => realpath(__DIR__ . '/fixtures/petstore.json'),
+        '--base-dir' => $this->baseDir,
+        '--namespace' => "'app\\modules\\api'",
+    ]);
+
+    expect($tester->getStatusCode())->toBe(0);
+
+    $petFile = file_get_contents($this->baseDir . '/modules/api/schemas/Pet.php');
+    expect($petFile)->toContain('namespace app\\modules\\api\\schemas;');
+    // Namespace declaration should NOT contain literal quotes
+    expect($petFile)->not->toContain("namespace 'app");
+});
+
 // ============================================================
 // Array request body tests
 // ============================================================
@@ -1243,6 +1296,182 @@ test('generates correct MultiFileUpload with file array property', function () {
 
     // Non-file properties should not be affected
     expect($uploadFile)->toContain('public string $description;');
+});
+
+test('primitive array request body (int[]) does not generate wrapper DTO', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/notifications/set-sent' => [
+                'post' => [
+                    'operationId' => 'setSentNotifications',
+                    'tags' => ['Notification'],
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'array',
+                                    'description' => 'List of notification IDs that were sent',
+                                    'items' => [
+                                        'type' => 'integer',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+        namespace: 'app\\modules\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    // No wrapper DTO should be generated for primitive array items
+    expect(file_exists($this->baseDir . '/modules/api/schemas/SetSentNotificationsRequestItem.php'))->toBeFalse();
+
+    $abstractFile = file_get_contents($this->baseDir . '/modules/api/contracts/AbstractNotificationController.php');
+
+    // Should use bodyType instead of bodyClass for primitive arrays
+    expect($abstractFile)->toContain("'bodyType' => 'int'");
+    expect($abstractFile)->toContain("'bodyIsArray' => true");
+    expect($abstractFile)->not->toContain('bodyClass');
+
+    $interfaceFile = file_get_contents($this->baseDir . '/modules/api/contracts/NotificationControllerInterface.php');
+
+    // Method should accept array type
+    expect($interfaceFile)->toContain('public function actionSetSentNotifications(array $body): void;');
+    // Docblock should show int[]
+    expect($interfaceFile)->toContain('@param int[] $body');
+});
+
+test('primitive array request body (string[]) does not generate wrapper DTO', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/tags/batch' => [
+                'post' => [
+                    'operationId' => 'batchAddTags',
+                    'tags' => ['Tag'],
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'array',
+                                    'items' => [
+                                        'type' => 'string',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+        namespace: 'app\\modules\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    // No wrapper DTO
+    expect(file_exists($this->baseDir . '/modules/api/schemas/BatchAddTagsRequestItem.php'))->toBeFalse();
+
+    $abstractFile = file_get_contents($this->baseDir . '/modules/api/contracts/AbstractTagController.php');
+
+    expect($abstractFile)->toContain("'bodyType' => 'string'");
+    expect($abstractFile)->toContain("'bodyIsArray' => true");
+    expect($abstractFile)->not->toContain('bodyClass');
+
+    $interfaceFile = file_get_contents($this->baseDir . '/modules/api/contracts/TagControllerInterface.php');
+
+    expect($interfaceFile)->toContain('public function actionBatchAddTags(array $body): void;');
+    expect($interfaceFile)->toContain('@param string[] $body');
+});
+
+test('optional primitive array request body generates nullable array', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/ids' => [
+                'post' => [
+                    'operationId' => 'processIds',
+                    'tags' => ['Processor'],
+                    'requestBody' => [
+                        'required' => false,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'array',
+                                    'items' => [
+                                        'type' => 'integer',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+        namespace: 'app\\modules\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    $interfaceFile = file_get_contents($this->baseDir . '/modules/api/contracts/ProcessorControllerInterface.php');
+
+    // Optional primitive array body should be nullable
+    expect($interfaceFile)->toContain('?array $body = null');
+    expect($interfaceFile)->toContain('@param int[] $body');
 });
 
 
