@@ -14,7 +14,6 @@ use futuretek\openapi\Middleware\DefaultLogger;
 use futuretek\openapi\Middleware\FileHandlerInterface;
 use futuretek\openapi\Middleware\LoggerInterface;
 use Psr\Http\Message\UploadedFileInterface;
-use yii\helpers\Json;
 use yii\web\Controller;
 use yii\web\Response;
 
@@ -290,7 +289,8 @@ abstract class AbstractApiController extends Controller
                 'status' => \Yii::$app->response->statusCode,
                 'data' => $this->summarizeData($serialized),
             ]);
-            $result = Json::encode($serialized);
+            \Yii::$app->response->data = $serialized;
+            $result = \Yii::$app->response;
         } elseif ($operationId !== null && $result === null) {
             $this->logger->info("Response: $operationId (void)", [
                 'status' => \Yii::$app->response->statusCode,

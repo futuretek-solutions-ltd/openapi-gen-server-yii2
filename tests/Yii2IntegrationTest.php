@@ -767,9 +767,9 @@ test('[yii2] JSON body is deserialized into typed DTO and passed to action', fun
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('create-pet', []);
 
-    // afterAction serializes the DTO to a JSON string
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    // afterAction returns a Response object with data set
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['id'])->toBe('new-123');
     expect($result['name'])->toBe('Buddy');
     expect($result['status'])->toBe('available');
@@ -787,8 +787,8 @@ test('[yii2] path parameter is passed to action via runAction params', function 
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('get-pet', ['petId' => 'abc-999']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['id'])->toBe('abc-999');
     expect($result['name'])->toBe('Pet-abc-999');
     expect($result['status'])->toBe('available');
@@ -806,8 +806,8 @@ test('[yii2] query parameters are bound and type-cast', function () {
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['total'])->toBe(5); // limit was cast from string '5' to int 5
 });
 
@@ -850,8 +850,8 @@ test('[yii2] enum query parameter is resolved via tryFrom', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['total'])->toBe(200); // pending → 200
 });
 
@@ -867,8 +867,8 @@ test('[yii2] body + path params are bound together on update', function () {
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('update-pet', ['petId' => 'pet-42']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['id'])->toBe('pet-42');
     expect($result['name'])->toBe('Updated');
     expect($result['status'])->toBe('sold');
@@ -888,9 +888,9 @@ test('[yii2] response DTO is serialized to JSON array by afterAction', function 
 
     // afterAction should have set response format to JSON
     expect($app->response->format)->toBe(\yii\web\Response::FORMAT_JSON);
-    // Result should be a JSON-encoded string (serialized by DataMapper + Json::encode)
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    // Result should be a Response object with data set (serialized by DataMapper)
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect(array_key_exists('id', $result))->toBeTrue();
     expect(array_key_exists('name', $result))->toBeTrue();
     expect(array_key_exists('status', $result))->toBeTrue();
@@ -1021,8 +1021,8 @@ test('[yii2] successful auth allows action through', function () {
     $result = $controller->runAction('create-pet', []);
 
     // Auth succeeded, action ran
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['id'])->toBe('auth-ok');
     expect($result['name'])->toBe('Authenticated');
 });
@@ -1061,8 +1061,8 @@ test('[yii2] no-security action skips auth entirely', function () {
     // listPets has no security — auth should not be called
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['total'])->toBe(42);
 });
 
@@ -1097,8 +1097,8 @@ test('[yii2] header parameter is extracted from request', function () {
     $controller = new $cls('item', $app);
     $result = $controller->runAction('list-items', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['total'])->toBe(strlen('req-abc-12345'));
 });
 
@@ -1115,8 +1115,8 @@ test('[yii2] default query parameter value is used when not provided', function 
     $controller = new $ctrlClass('pet', $app);
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['total'])->toBe(20); // default limit
 });
 
@@ -1156,8 +1156,8 @@ test('[yii2] nested DTO in response is fully serialized', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('get-pet', ['petId' => 'nested-1']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['id'])->toBe('nested-1');
     expect($result['category'])->toBeArray();
     expect($result['category']['id'])->toBe(5);
@@ -1201,8 +1201,8 @@ test('[yii2] list response with DTO items is fully serialized', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('list-pets', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['total'])->toBe(2);
     expect($result['items'])->toBeArray()->toHaveCount(2);
     expect($result['items'][0]['id'])->toBe('1');
@@ -1232,8 +1232,8 @@ test('[yii2] runAction via app routes full end-to-end', function () {
 
     $result = $app->runAction('pet/create-pet', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['id'])->toBe('new-123');
     expect($result['name'])->toBe('E2E-Pet');
     expect($result['status'])->toBe('pending');
@@ -1295,8 +1295,8 @@ test('[yii2] single file upload via multipart/form-data converts to UploadedFile
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-photo-1']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['id'])->toBe('pet-photo-1');
     expect($result['name'])->toBe('file:cat.jpg:18');
 
@@ -1349,8 +1349,8 @@ test('[yii2] file upload with UPLOAD_ERR_NO_FILE is skipped', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-nofile']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['name'])->toBe('photo-not-set');
 });
 
@@ -1403,8 +1403,8 @@ test('[yii2] mixed form data and file fields in multipart request', function () 
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-mixed']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['name'])->toBe('file-ok|caption:A nice caption');
 
     if (file_exists($tmpFile)) {
@@ -1460,8 +1460,8 @@ test('[yii2] single file upload getStream returns correct content', function () 
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-stream']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['name'])->toBe('stream verification content');
 
     if (file_exists($tmpFile)) {
@@ -1520,8 +1520,8 @@ test('[yii2] array of files upload via multipart/form-data converts to UploadedF
     $controller = new $cls('upload', $app);
     $result = $controller->runAction('upload-multiple-files', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['uploadedCount'])->toBe(3);
     expect($result['message'])->toBe('doc1.txt:16,doc2.pdf:21,doc3.bin:5');
 
@@ -1570,8 +1570,8 @@ test('[yii2] array of files skips entries with UPLOAD_ERR_NO_FILE', function () 
     $controller = new $cls('upload', $app);
     $result = $controller->runAction('upload-multiple-files', []);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     // Only 1 file should be included (2 are UPLOAD_ERR_NO_FILE)
     expect($result['uploadedCount'])->toBe(1);
 
@@ -1630,8 +1630,8 @@ test('[yii2] file upload getStream reads binary content correctly', function () 
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-binary']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['name'])->toBe('106:000102fffefd');
 
     if (file_exists($tmpFile)) {
@@ -1704,8 +1704,8 @@ test('[yii2] file upload with custom FileHandler implementation', function () {
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-custom']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['name'])->toBe('custom_original.jpg');
 
     if (file_exists($tmpFile)) {
@@ -1764,8 +1764,8 @@ test('[yii2] multipart file upload metadata is preserved through pipeline', func
     $controller = new $cls('pet', $app);
     $result = $controller->runAction('upload-pet-photo', ['petId' => 'pet-meta']);
 
-    expect($result)->toBeString();
-    $result = json_decode($result, true);
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    $result = $result->data;
     expect($result['name'])->toBe('name:report.pdf|type:application/pdf|size:13|error:0');
 
     if (file_exists($tmpFile)) {
