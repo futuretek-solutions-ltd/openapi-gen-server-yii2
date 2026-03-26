@@ -111,7 +111,10 @@ final class OpenApiParser
 
             if (!empty($schema->enum)) {
                 $this->knownEnumPointers[$pointer] = $name;
-            } else {
+            } elseif (!empty($schema->properties) || $schema->allOf !== null) {
+                // Only index schemas that will generate a PHP class file.
+                // Primitive schemas (type: string, integer, etc.) resolve to PHP scalars and must not be indexed.
+                // Empty object schemas (type: object, no properties) are spec bugs — warned later in parseSchemas.
                 $this->knownSchemaPointers[$pointer] = $name;
             }
         }
@@ -170,7 +173,16 @@ final class OpenApiParser
             }
 
             // Object schema
-            if ($schema->type === 'object' || $schema->properties !== null || $schema->allOf !== null) {
+            if ($schema->type === 'object' || !empty($schema->properties) || $schema->allOf !== null) {
+                if (empty($schema->properties) && $schema->allOf === null) {
+                    // type:object with no properties is almost always a spec error left over from before
+                    // plain/binary responses were properly typed. Warn and skip.
+                    $this->result->addWarning(
+                        "Schema '$name' is declared as type:object but has no properties and no allOf — " .
+                        "this is likely a spec error. Did you mean a scalar type (string, integer, …)? Skipping."
+                    );
+                    continue;
+                }
                 $this->parseObjectSchema($name, $schema);
             }
         }
@@ -566,7 +578,6 @@ final class OpenApiParser
     {
         $pathExtensions = $this->getExtensions($pathItem);
         $pathController = $pathExtensions['x-controller'] ?? null;
-        $pathNamespace = $pathExtensions['x-ns'] ?? null;
 
         // Shared parameters at path level
         $sharedParams = [];
@@ -587,7 +598,7 @@ final class OpenApiParser
                 continue;
             }
 
-            $this->parseOperation($path, strtoupper($method), $operation, $sharedParams, $pathController, $pathNamespace);
+            $this->parseOperation($path, strtoupper($method), $operation, $sharedParams, $pathController);
         }
     }
 
@@ -600,7 +611,6 @@ final class OpenApiParser
         Operation $operation,
         array $sharedParams,
         ?string $pathController,
-        ?string $pathNamespace,
     ): void {
         $operationId = $operation->operationId;
 
@@ -620,8 +630,6 @@ final class OpenApiParser
         $controllerName = $extensions['x-controller']
             ?? $pathController
             ?? $this->resolveControllerFromTag($operation, $path);
-
-        $controllerNamespace = $extensions['x-ns'] ?? $pathNamespace;
 
         // Action name from operationId
         $actionName = 'action' . ucfirst($operationId);
@@ -688,10 +696,16 @@ final class OpenApiParser
                 if ($response->content !== null) {
                     foreach ($response->content as $mediaType => $mediaTypeObj) {
                         if ($mediaTypeObj instanceof MediaType && $mediaTypeObj->schema !== null) {
-                            $responseClass = $this->resolveSchemaReference(
-                                $mediaTypeObj->schema,
-                                ucfirst($operationId) . 'Response' . $statusCode,
-                            );
+                            if ($this->isJsonLikeMediaType($mediaType)) {
+                                $responseClass = $this->resolveSchemaReference(
+                                    $mediaTypeObj->schema,
+                                    ucfirst($operationId) . 'Response' . $statusCode,
+                                );
+                            } else {
+                                // Non-JSON content (octet-stream, text/plain, image/*, etc.):
+                                // resolve to a plain PHP type — no DTO class generated.
+                                $responseClass = $this->resolveNonJsonResponseType($mediaTypeObj->schema);
+                            }
                             $responses[(int)$statusCode] = $responseClass;
 
                             if ($successResponseClass === null && $statusCode >= 200 && $statusCode < 300) {
@@ -725,7 +739,6 @@ final class OpenApiParser
             httpMethod: $httpMethod,
             path: $path,
             controllerName: $controllerName,
-            controllerNamespace: $controllerNamespace,
             actionName: $actionName,
             requestBodyClass: $requestBodyClass,
             requestBodyMediaType: $requestBodyMediaType,
@@ -766,14 +779,49 @@ final class OpenApiParser
             return 'array';
         }
 
-        // Truly inline schema — generate DTO
-        if ($schema->type === 'object' || $schema->properties !== null || $schema->allOf !== null) {
+        // Truly inline schema — generate DTO only when it actually has structure
+        if (!empty($schema->properties) || $schema->allOf !== null) {
             $this->parseObjectSchema($inlineFallbackName, $schema);
             return $inlineFallbackName;
         }
 
-        // Scalar response type — return as-is (rare)
-        return $this->resolvePhpType($schema);
+        // Scalar type — return simple PHP type. UploadedFileInterface for binary format,
+        // clean primitives for all others. Avoids returning FQCN strings that break import generation.
+        return match (true) {
+            $schema->type === 'string' && in_array($schema->format, ['binary', 'byte'], true) => 'UploadedFileInterface',
+            $schema->type === 'string' => 'string',
+            $schema->type === 'integer' => 'int',
+            $schema->type === 'number' => 'float',
+            $schema->type === 'boolean' => 'bool',
+            default => 'mixed',
+        };
+    }
+
+    /**
+     * Determine whether a media type is JSON-like (should use full schema DTO resolution).
+     */
+    private function isJsonLikeMediaType(string $mediaType): bool
+    {
+        return str_contains($mediaType, 'json');
+    }
+
+    /**
+     * Resolve a response type for non-JSON content (octet-stream, text/plain, image/*, etc.).
+     *
+     * Returns 'UploadedFileInterface' when the schema describes binary data (format: binary/byte),
+     * 'string' for everything else. No DTO class is ever generated.
+     */
+    private function resolveNonJsonResponseType(Schema|Reference $schema): string
+    {
+        if ($schema instanceof Reference) {
+            return 'string';
+        }
+
+        if ($schema->type === 'string' && in_array($schema->format, ['binary', 'byte'], true)) {
+            return 'UploadedFileInterface';
+        }
+
+        return 'string';
     }
 
     /**

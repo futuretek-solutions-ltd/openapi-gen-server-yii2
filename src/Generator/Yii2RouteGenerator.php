@@ -23,6 +23,8 @@ final class Yii2RouteGenerator
      */
     public function generate(array $operations): void
     {
+        $this->checkAmbiguousRoutes($operations);
+
         $lines = [];
         $lines[] = '<?php';
         $lines[] = '';
@@ -42,7 +44,15 @@ final class Yii2RouteGenerator
         $lines[] = 'return [';
 
         foreach ($operations as $op) {
-            $yiiPath = $this->convertPath($op->path);
+            // Build a map of path parameter name => PHP type for regex generation
+            $pathParamTypes = [];
+            foreach ($op->parameters as $param) {
+                if ($param->in === 'path') {
+                    $pathParamTypes[$param->name] = $param->type;
+                }
+            }
+
+            $yiiPath = $this->convertPath($op->path, $pathParamTypes);
             $controllerId = $this->toControllerId($op->controllerName);
             $actionId = $this->toActionId($op->operationId);
             $method = strtoupper($op->httpMethod);
@@ -71,16 +81,142 @@ final class Yii2RouteGenerator
     }
 
     /**
-     * Convert OpenAPI path to Yii2 URL rule pattern.
-     * e.g., /pets/{petId}/toys/{toyId} => pets/<petId>/toys/<toyId>
+     * Detect routes where a parametric segment with \S+ regex can shadow a static segment
+     * in another route of the same HTTP method. Emits a warning for each ambiguous pair,
+     * noting which appears first (and would therefore shadow the other).
+     *
+     * Example: GET /issues/{id} (\S+) listed before GET /issues/create →
+     *   Yii2 matches /issues/create against the parametric rule and the static rule is never reached.
+     *
+     * @param ParsedOperation[] $operations
      */
-    private function convertPath(string $path): string
+    private function checkAmbiguousRoutes(array $operations): void
+    {
+        // Group by HTTP method, preserving declaration order (important for shadow direction)
+        $byMethod = [];
+        foreach ($operations as $op) {
+            $byMethod[$op->httpMethod][] = $op;
+        }
+
+        foreach ($byMethod as $ops) {
+            $n = count($ops);
+            for ($i = 0; $i < $n; $i++) {
+                for ($j = $i + 1; $j < $n; $j++) {
+                    $this->checkPair($ops[$i], $ops[$j]);
+                }
+            }
+        }
+    }
+
+    /**
+     * Check whether two operations produce ambiguous Yii2 route patterns.
+     * $a appears before $b in the spec (and therefore in the route file).
+     */
+    private function checkPair(ParsedOperation $a, ParsedOperation $b): void
+    {
+        $segsA = array_values(array_filter(explode('/', $a->path), static fn(string $s) => $s !== ''));
+        $segsB = array_values(array_filter(explode('/', $b->path), static fn(string $s) => $s !== ''));
+
+        if (count($segsA) !== count($segsB)) {
+            return; // Different depth — Yii2 won't confuse them
+        }
+
+        // Build param-name → PHP type maps for each operation
+        $typesA = [];
+        $typesB = [];
+        foreach ($a->parameters as $param) {
+            if ($param->in === 'path') {
+                $typesA[$param->name] = $param->type;
+            }
+        }
+        foreach ($b->parameters as $param) {
+            if ($param->in === 'path') {
+                $typesB[$param->name] = $param->type;
+            }
+        }
+
+        // Determine whether A (first in spec) has a broad (\S+) param where B has a static segment.
+        // That means A's rule fires first in Yii2 and swallows B's static path.
+        $aShadowsB = false;
+
+        for ($i = 0, $n = count($segsA); $i < $n; $i++) {
+            $segA = $segsA[$i];
+            $segB = $segsB[$i];
+
+            $isParamA = str_starts_with($segA, '{') && str_ends_with($segA, '}');
+            $isParamB = str_starts_with($segB, '{') && str_ends_with($segB, '}');
+
+            if (!$isParamA && !$isParamB) {
+                if ($segA !== $segB) {
+                    return; // Segments differ statically — routes are unambiguous
+                }
+                continue; // Same static segment, keep checking
+            }
+
+            if ($isParamA && $isParamB) {
+                continue; // Both parametric — same "width", keep checking
+            }
+
+            // A has the param, B has a static segment → A could shadow B
+            if ($isParamA) {
+                $paramName = trim($segA, '{}');
+                $paramType = $typesA[$paramName] ?? 'string';
+                if (!in_array($paramType, ['int', 'float'], true)) {
+                    $aShadowsB = true;
+                }
+            }
+            // B has the param, A has a static segment → A fires first (correct), no problem
+        }
+
+        // A appears before B in the route file (spec order is preserved).
+        // Shadowing only happens when A's broad (\S+) param would consume B's static segment —
+        // because Yii2 tries A first. If B has the param and A is static, A fires first and wins.
+        if ($aShadowsB) {
+            $this->result->addWarning(
+                "Ambiguous routes: {$a->httpMethod} {$a->path} (listed first) will shadow " .
+                "{$b->httpMethod} {$b->path} — the \\S+ path parameter matches the static segment. " .
+                "Move {$b->path} before {$a->path} in the spec, or constrain the parameter type to int/float."
+            );
+        }
+    }
+
+    /**
+     * Convert OpenAPI path to Yii2 URL rule pattern with type-based regex constraints.
+     *
+     * - Integer/float parameters → <name:\d+>
+     * - String and all other types → <name:\S+>
+     *
+     * e.g., /pets/{petId}/items/{itemId} => pets/<petId:\S+>/items/<itemId:\S+>
+     *
+     * @param array<string, string> $pathParamTypes Map of param name => PHP type
+     */
+    private function convertPath(string $path, array $pathParamTypes = []): string
     {
         // Remove leading slash
         $path = ltrim($path, '/');
 
-        // Convert {param} to <param>
-        return preg_replace('/\{([^}]+)}/', '<$1>', $path);
+        // Convert {param} to <param:REGEX> based on parameter type
+        return preg_replace_callback('/\{([^}]+)}/', function (array $matches) use ($pathParamTypes): string {
+            $name = $matches[1];
+            $type = $pathParamTypes[$name] ?? 'string';
+            $regex = $this->typeToRegex($type);
+
+            return "<{$name}:{$regex}>";
+        }, $path);
+    }
+
+    /**
+     * Map a PHP type to a Yii2 URL parameter regex pattern.
+     *
+     * - int, float → \d+ (digits only)
+     * - string and all others → \S+ (any non-whitespace)
+     */
+    private function typeToRegex(string $phpType): string
+    {
+        return match ($phpType) {
+            'int', 'float' => '\d+',
+            default => '\S+',
+        };
     }
 
     /**

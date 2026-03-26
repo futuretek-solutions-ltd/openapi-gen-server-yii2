@@ -222,7 +222,6 @@
     },
     "/categories": {
       "x-controller": "Category",
-      "x-ns": "app\\modules\\catalog\\controllers",
       "get": {
         "operationId": "listCategories",
         "summary": "List all categories",

@@ -68,7 +68,7 @@ final class AbstractControllerGenerator
      */
     private function generateAbstractController(string $controllerName, array $operations, string $dir): void
     {
-        $namespace = $operations[0]->controllerNamespace ?? $this->config->controllerNamespace();
+        $namespace = $this->config->controllerNamespace();
         $schemaNamespace = $this->config->schemaNamespace();
         $enumNamespace = $this->config->enumNamespace();
         $className = 'Abstract' . $controllerName . 'Controller';

@@ -8,16 +8,19 @@ A code generator that transforms an OpenAPI 3.0.x specification into a fully typ
 
 ## Key Features
 
-- **Schema DTOs** — Generates typed data classes with [`futuretek/data-mapper`](https://github.com/futuretek-solutions-ltd/data-mapper) attributes (`#[ArrayType]`, `#[MapType]`, `#[Format]`)
+- **Schema DTOs** — Generates typed data classes with [`futuretek/data-mapper`](https://github.com/futuretek-solutions-ltd/data-mapper) attributes (`#[ArrayType]`, `#[MapType]`, `#[Format]`) and fluent setters for every property
 - **Backed Enums** — PHP 8.4 string/int backed enums from OpenAPI enums, with `x-enum-descriptions` support
 - **Controller Interfaces & Abstract Controllers** — Generated into a `contracts` namespace (not `controllers`) to avoid conflicts with the Yii2 default controller namespace where your implementations live
-- **Yii2 Route File** — Ready-to-use URL rules configuration
+- **Yii2 Route File** — Ready-to-use URL rules with type-based regex constraints (`\d+` for int/float, `\S+` for string)
+- **Ambiguous Route Detection** — Warns when a `\S+` parametric route would shadow a static route in Yii2's ordered URL matching
 - **File Upload Handling** — Single files and file arrays (`format: binary`) mapped to PSR-7 `UploadedFileInterface`, with a built-in `Psr7Stream` implementation for `getStream()`
+- **Binary/Plain Response Types** — `application/octet-stream` responses return `UploadedFileInterface`, `text/plain` returns `string` — no spurious DTO classes generated
 - **Array Request Bodies** — Typed array body parameters (`array` of DTOs) with `@param ItemClass[]` PHPDoc and `bodyIsArray` + `bodyItemClass` in `operationMeta`
 - **Route Prefix** — Optional `routePrefix` for module-style routes (e.g. `api/pet/list-pets`)
 - **Discriminator Mapping** — Polymorphic body deserialization via `oneOf`/`anyOf` with discriminator
 - **Pluggable Middleware** — Authentication, authorization, logging, and file handling with sensible defaults
 - **Namespace = Directory** — Files are placed according to their namespace, following Yii2 conventions
+- **Strict Mode** — `--strict` flag treats warnings as errors (non-zero exit), suitable for CI pipelines
 
 ## Requirements
 
@@ -141,13 +144,20 @@ The first namespace segment (`app`) maps to `--base-dir`. Remaining segments bec
    - Resolves enum parameters via `::tryFrom()`
    - Handles discriminator mapping for polymorphic bodies
 3. Your action receives fully typed parameters and returns a DTO
-4. `AbstractApiController::afterAction()` serializes the response to JSON
+4. `AbstractApiController::afterAction()` serializes the response to JSON (or streams raw bytes for `UploadedFileInterface` returns)
 
 ### Body Handling
 
 - **JSON** — Parsed from raw body, mapped to DTO via DataMapper
 - **Multipart** — Form fields + file uploads, with `UploadedFileInterface` (PSR-7) for files
 - **Discriminator** — Reads the discriminator property, resolves the concrete subclass, then deserializes
+
+### Response Handling
+
+- **DTO** — Serialized to JSON array via DataMapper
+- **`UploadedFileInterface`** — Response is streamed as raw binary (`application/octet-stream`), with `Content-Disposition` and `Content-Length` headers set automatically
+- **`string`** — Returned as-is (e.g. for `text/plain` responses)
+- **`void`** — No response body; Yii2 format is not changed
 
 ### File Upload Handling
 
@@ -194,6 +204,16 @@ $stream = $body->photo->getStream();
 $contents = $stream->getContents();
 ```
 
+### Binary / Plain Response Types
+
+Non-JSON response content types are mapped to simple PHP types — no DTO class is generated:
+
+| Content-Type | `format` | Return type |
+|---|---|---|
+| `application/octet-stream` | `binary` / `byte` | `UploadedFileInterface` |
+| `text/plain` | any | `string` |
+| `application/json` | — | Generated DTO class |
+
 ### Array Request Bodies
 
 When a request body is an array of DTOs, the generator creates the correct parameter signature:
@@ -217,6 +237,19 @@ public function actionBatchCreate(array $body): BatchResult;
 // operationMeta includes bodyIsArray and bodyItemClass
 // so AbstractApiController deserializes each array element into the correct DTO
 ```
+
+### Schema Setters
+
+Every generated DTO class includes a fluent setter for each property, allowing builder-style construction:
+
+```php
+$pet = (new Pet())
+    ->setName('Buddy')
+    ->setStatus(PetStatus::Available)
+    ->setTags(null);
+```
+
+Setters accept `?Type` for optional/nullable properties and `Type` for required ones. They return `static` for subclass compatibility.
 
 ### Security
 
@@ -244,6 +277,29 @@ When using Yii2 modules, route targets need a prefix matching the module ID. Use
 'GET pets' => 'api/pet/list-pets',
 ```
 
+### Route Regex Constraints
+
+Path parameters in generated URL rules include a type-based regex constraint so Yii2 can distinguish them from static segments:
+
+| Parameter type | Regex | Example rule |
+|---|---|---|
+| `integer` / `number` | `\d+` | `GET items/<id:\d+>` |
+| `string` and all others | `\S+` | `GET items/<slug:\S+>` |
+
+### Ambiguous Route Detection
+
+The generator warns when a parametric route using `\S+` is listed **before** a static route at the same depth and HTTP method. In this situation Yii2 evaluates the parametric rule first and the static rule is never reached.
+
+```
+⚠ Ambiguous routes: GET /issues/{id} (listed first) will shadow GET /issues/create
+  — the \S+ path parameter matches the static segment.
+  Move /issues/create before /issues/{id} in the spec, or constrain the parameter type to int/float.
+```
+
+**Fix options:**
+- Reorder: put static routes before parametric ones in the spec
+- Type-constrain: declare the path parameter as `type: integer` to use `\d+` (which won't match `create`)
+
 ## CLI Options
 
 ```
@@ -257,17 +313,43 @@ Options:
   --namespace=NS          Root namespace for generated code [default: "app\api"]
   --schema-ns=NS          Sub-namespace for schemas (DTOs) [default: "schemas"]
   --enum-ns=NS            Sub-namespace for enums [default: "enums"]
-  --controller-ns=NS      Sub-namespace for controllers [default: "controllers"]
+  --controller-ns=NS      Sub-namespace for controller interfaces [default: "contracts"]
   --route-file=PATH       Route file path relative to base-dir [default: "config/routes.api.php"]
   --route-prefix=PREFIX   Prefix for route targets, e.g. "api" → "api/pet/list-pets" [default: none]
+  --clean                 Remove all .php files from target directories before generation
+  --strict                Treat warnings as errors (non-zero exit code when any warnings are produced)
 ```
+
+### Output Order
+
+The generator always outputs in this order:
+
+1. **Errors** — fatal problems that prevented generation (exit code 1)
+2. **Generated files** — list of all written `.php` files
+3. **Warnings** — non-fatal issues displayed last so they are easy to spot
+
+With `--strict`, any warnings also cause a non-zero exit code after being displayed — useful for enforcing clean specs in CI.
+
+## Spec Quality Checks
+
+The generator performs several spec quality checks during parsing and emits warnings for:
+
+| Issue | Warning |
+|---|---|
+| Duplicate `operationId` | `Duplicate operationId 'X' at METHOD /path` |
+| `type: object` schema with no properties and no `allOf` | `Schema 'X' is declared as type:object but has no properties — likely a spec error` |
+| Inline enum missing `x-enum` name | `Inline enum on property 'X' has no x-enum name` |
+| `\S+` route shadowing a static route | `Ambiguous routes: METHOD /a will shadow METHOD /b` |
+
+Empty object schemas (no properties, no `allOf`) are **skipped** — no PHP file is generated. This catches the common mistake of using `type: object` for responses that should be a scalar type (`string`, `integer`, etc.).
+
+Use `--strict` to turn any of these warnings into a build failure.
 
 ## Vendor Extensions
 
 | Extension | Level | Description |
 |---|---|---|
 | `x-controller` | path / operation | Override the controller name |
-| `x-ns` | path / operation | Override the controller namespace |
 | `x-enum` | inline enum schema | Name override for inline enums (warns if missing) |
 | `x-enum-descriptions` | enum schema | Array of per-value descriptions, aligned with enum values |
 
@@ -277,7 +359,6 @@ Options:
 paths:
   /pets:
     x-controller: Pet
-    x-ns: app\modules\pet\controllers
     get:
       operationId: listPets
       parameters:
@@ -337,7 +418,7 @@ public array $settings;
 - **Array bodies** — When the request body is `type: array`, the parameter is `array $body` with `@param ItemClass[]` PHPDoc
 - **Then path params** — Required path parameters
 - **Then query/header/cookie** — Required first, then optional with defaults
-- **Return type** — Success response DTO, `array` for array responses, `void` for no-content
+- **Return type** — Success response DTO, `array` for array responses, `UploadedFileInterface` for binary downloads, `string` for plain text, `void` for no-content
 - **Hyphenated names** — Converted to camelCase (`X-Request-Id` → `$xRequestId`)
 
 ## Discriminator Support
@@ -387,11 +468,11 @@ src/
 ├── Command/
 │   └── GenerateCommand.php         # Symfony Console command
 ├── Generator/
-│   ├── SchemaGenerator.php         # DTO class generation
+│   ├── SchemaGenerator.php         # DTO class generation (with fluent setters)
 │   ├── EnumGenerator.php           # Backed enum generation
 │   ├── ControllerInterfaceGenerator.php
 │   ├── AbstractControllerGenerator.php
-│   └── Yii2RouteGenerator.php
+│   └── Yii2RouteGenerator.php      # Route generation + ambiguity detection
 ├── Middleware/
 │   ├── AuthenticationInterface.php
 │   ├── AuthorizationInterface.php
@@ -411,9 +492,9 @@ src/
 tests/
 ├── bootstrap.php                   # Yii2 class autoloading for tests
 ├── Pest.php
-├── GeneratorTest.php               # Generator output tests (52 tests)
-├── FileHandlingTest.php            # Psr7Stream, Psr7UploadedFile, DefaultFileHandler (56 tests)
-├── Yii2IntegrationTest.php         # Full pipeline integration tests (46 tests)
+├── GeneratorTest.php               # Generator output tests
+├── FileHandlingTest.php            # Psr7Stream, Psr7UploadedFile, DefaultFileHandler
+├── Yii2IntegrationTest.php         # Full pipeline integration tests
 └── fixtures/
     ├── petstore.json
     └── edge_cases.json

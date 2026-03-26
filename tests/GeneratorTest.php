@@ -171,10 +171,10 @@ test('generates correct Yii2 routes', function () {
     expect($routes)->toBeArray();
     expect($routes['GET pets'])->toBe('pet/list-pets');
     expect($routes['POST pets'])->toBe('pet/create-pet');
-    expect($routes['GET pets/<petId>'])->toBe('pet/get-pet');
-    expect($routes['PUT pets/<petId>'])->toBe('pet/update-pet');
-    expect($routes['DELETE pets/<petId>'])->toBe('pet/delete-pet');
-    expect($routes['POST pets/<petId>/photo'])->toBe('pet/upload-pet-photo');
+    expect($routes['GET pets/<petId:\S+>'])->toBe('pet/get-pet');
+    expect($routes['PUT pets/<petId:\S+>'])->toBe('pet/update-pet');
+    expect($routes['DELETE pets/<petId:\S+>'])->toBe('pet/delete-pet');
+    expect($routes['POST pets/<petId:\S+>/photo'])->toBe('pet/upload-pet-photo');
     expect($routes['GET categories'])->toBe('category/list-categories');
 });
 
@@ -198,21 +198,6 @@ test('generates PetStatus enum with descriptions', function () {
     expect($enumFile)->toContain('/** Pet is available for adoption */');
     expect($enumFile)->toContain('/** Pet adoption is pending */');
     expect($enumFile)->toContain('/** Pet has been sold */');
-});
-
-test('respects x-ns vendor extension for namespace override', function () {
-    $config = new Config(
-        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
-        baseDir: $this->baseDir,
-    );
-
-    $generator = new Generator($config);
-    $generator->generate();
-
-    $categoryInterface = file_get_contents($this->baseDir . '/api/contracts/CategoryControllerInterface.php');
-
-    // Should use x-ns override
-    expect($categoryInterface)->toContain('namespace app\\modules\\catalog\\controllers;');
 });
 
 test('warns on inline enum without x-enum name', function () {
@@ -562,6 +547,78 @@ test('array response type returns plain array', function () {
     expect($file)->not->toContain('ListReportsResponse200');
 });
 
+test('application/octet-stream response with binary schema returns UploadedFileInterface', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
+        baseDir: $this->baseDir,
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    $file = file_get_contents($this->baseDir . '/api/contracts/DownloadControllerInterface.php');
+
+    // Binary download should return UploadedFileInterface, not a generated DTO
+    expect($file)->toContain('public function actionDownloadBinaryFile(): UploadedFileInterface;');
+    // Must import from the correct PSR namespace, NOT from the schema namespace
+    expect($file)->toContain('use Psr\Http\Message\UploadedFileInterface;');
+    expect($file)->not->toContain('schemas\UploadedFileInterface');
+    // No schema class generated for this response
+    expect($file)->not->toContain('DownloadBinaryFileResponse200');
+});
+
+test('no schema class is generated for binary response types', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
+        baseDir: $this->baseDir,
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    $schemaFiles = array_map('basename', glob($this->baseDir . '/api/schemas/*.php') ?: []);
+
+    // No DTO class should be generated for the binary/plain response operations
+    expect($schemaFiles)->not->toContain('DownloadBinaryFileResponse200.php');
+    expect($schemaFiles)->not->toContain('DownloadTextFileResponse200.php');
+    expect($schemaFiles)->not->toContain('DownloadRefBinaryResponse200.php');
+    // The primitive component schema must NOT generate a class either
+    expect($schemaFiles)->not->toContain('BinaryData.php');
+});
+
+test('text/plain response returns string return type', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
+        baseDir: $this->baseDir,
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    $file = file_get_contents($this->baseDir . '/api/contracts/DownloadControllerInterface.php');
+
+    // Plain-text response should be a simple string, not a DTO
+    expect($file)->toContain('public function actionDownloadTextFile(): string;');
+    expect($file)->not->toContain('DownloadTextFileResponse200');
+});
+
+test('component primitive schema referenced in response resolves to UploadedFileInterface', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
+        baseDir: $this->baseDir,
+    );
+
+    $generator = new Generator($config);
+    $generator->generate();
+
+    $file = file_get_contents($this->baseDir . '/api/contracts/DownloadControllerInterface.php');
+
+    // $ref to a primitive (type: string, format: binary) component schema must not produce
+    // a missing-class import — it should resolve to UploadedFileInterface (non-JSON + binary schema)
+    expect($file)->toContain('public function actionDownloadRefBinary(): UploadedFileInterface;');
+    expect($file)->not->toContain('BinaryData');
+});
+
 test('void return type for no-content response', function () {
     $config = new Config(
         specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
@@ -625,11 +682,185 @@ test('routes convert PascalCase controllers to kebab-case', function () {
 
     // camelCase operationId should become kebab-case action
     expect($routes['POST upload'])->toBe('upload/upload-multiple-files');
-    expect($routes['PUT mixed/<id>'])->toBe('mixed/update-mixed');
-    expect($routes['PATCH items/<itemId>'])->toBe('item/patch-item');
+    expect($routes['PUT mixed/<id:\d+>'])->toBe('mixed/update-mixed');
+    expect($routes['PATCH items/<itemId:\S+>'])->toBe('item/patch-item');
 });
 
-test('empty schema generates valid empty class', function () {
+test('path parameters get type-based regex: \d+ for int, \S+ for string', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
+        baseDir: $this->baseDir,
+    );
+
+    (new Generator($config))->generate();
+
+    $routes = require $this->baseDir . '/config/routes.api.php';
+
+    // integer path param must use \d+
+    expect($routes)->toHaveKey('PUT mixed/<id:\d+>');
+
+    // string path params must use \S+
+    expect($routes)->toHaveKey('GET items/<itemId:\S+>');
+    expect($routes)->toHaveKey('PATCH items/<itemId:\S+>');
+
+    // params with no explicit type default to \S+
+    expect(array_keys($routes))->each->not->toMatch('/\{[^}]+}/'); // no unconverted {params}
+    expect(array_keys($routes))->each->not->toMatch('/<\w+>/');    // no bare <param> without regex
+});
+
+// ============================================================
+// Route ambiguity detection tests
+// ============================================================
+
+test('ambiguous routes: string param before static segment emits warning', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/issues/{id}' => [
+                'get' => [
+                    'operationId' => 'getIssue',
+                    'tags' => ['Issue'],
+                    'parameters' => [[
+                        'name' => 'id', 'in' => 'path', 'required' => true,
+                        'schema' => ['type' => 'string'],
+                    ]],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/issues/create' => [
+                'get' => [
+                    'operationId' => 'createIssueForm',
+                    'tags' => ['Issue'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    expect($result->hasWarnings())->toBeTrue();
+    $warn = implode(' ', $result->getWarnings());
+    expect($warn)->toContain('/issues/{id}');
+    expect($warn)->toContain('/issues/create');
+    expect($warn)->toContain('shadow');
+});
+
+test('ambiguous routes: static segment before string param does not warn (correct order)', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/issues/create' => [
+                'get' => [
+                    'operationId' => 'createIssueForm',
+                    'tags' => ['Issue'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/issues/{id}' => [
+                'get' => [
+                    'operationId' => 'getIssue',
+                    'tags' => ['Issue'],
+                    'parameters' => [[
+                        'name' => 'id', 'in' => 'path', 'required' => true,
+                        'schema' => ['type' => 'string'],
+                    ]],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    // No shadowing warning when static comes first
+    $routeWarnings = array_filter($result->getWarnings(), fn($w) => str_contains($w, 'shadow'));
+    expect($routeWarnings)->toBeEmpty();
+});
+
+test('non-ambiguous routes: int param vs static segment does not warn', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/items/{id}' => [
+                'get' => [
+                    'operationId' => 'getItem',
+                    'tags' => ['Item'],
+                    'parameters' => [[
+                        'name' => 'id', 'in' => 'path', 'required' => true,
+                        'schema' => ['type' => 'integer'],
+                    ]],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/items/stats' => [
+                'get' => [
+                    'operationId' => 'itemStats',
+                    'tags' => ['Item'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    $routeWarnings = array_filter($result->getWarnings(), fn($w) => str_contains($w, 'shadow'));
+    expect($routeWarnings)->toBeEmpty();
+});
+
+test('non-ambiguous routes: different HTTP methods on same path do not warn', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/items/{id}' => [
+                'get' => [
+                    'operationId' => 'getItem',
+                    'tags' => ['Item'],
+                    'parameters' => [[
+                        'name' => 'id', 'in' => 'path', 'required' => true,
+                        'schema' => ['type' => 'string'],
+                    ]],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/items/stats' => [
+                'post' => [
+                    'operationId' => 'itemStats',
+                    'tags' => ['Item'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    $routeWarnings = array_filter($result->getWarnings(), fn($w) => str_contains($w, 'shadow'));
+    expect($routeWarnings)->toBeEmpty();
+});
+
+test('empty schema is not generated and emits a warning', function () {
     $config = new Config(
         specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
         baseDir: $this->baseDir,
@@ -638,13 +869,16 @@ test('empty schema generates valid empty class', function () {
     $generator = new Generator($config);
     $result = $generator->generate();
 
+    // File must not be generated
     $generated = array_map(fn(string $f) => basename($f), $result->getGenerated());
-    expect($generated)->toContain('EmptySchema.php');
+    expect($generated)->not->toContain('EmptySchema.php');
+    expect(file_exists($this->baseDir . '/api/schemas/EmptySchema.php'))->toBeFalse();
 
-    $file = file_get_contents($this->baseDir . '/api/schemas/EmptySchema.php');
-    expect($file)->toContain('class EmptySchema');
-    // Should be a valid class with no properties
-    expect($file)->toContain("{\n}\n");
+    // A warning must be emitted
+    expect($result->hasWarnings())->toBeTrue();
+    $warnings = implode(' ', $result->getWarnings());
+    expect($warnings)->toContain('EmptySchema');
+    expect($warnings)->toContain('no properties');
 });
 
 test('configurable sub-namespaces are reflected in generated files', function () {
@@ -829,8 +1063,8 @@ test('multiple HTTP methods on same path generate separate route entries', funct
     expect($routes)->toHaveKey('POST items');
 
     // /items/{itemId} should have both GET and PATCH
-    expect($routes)->toHaveKey('GET items/<itemId>');
-    expect($routes)->toHaveKey('PATCH items/<itemId>');
+    expect($routes)->toHaveKey('GET items/<itemId:\S+>');
+    expect($routes)->toHaveKey('PATCH items/<itemId:\S+>');
 });
 
 test('header parameter stored in operationMeta with in=header', function () {
@@ -1062,10 +1296,10 @@ test('routes include routePrefix when configured', function () {
     expect($routes)->toBeArray();
     expect($routes['GET pets'])->toBe('api/pet/list-pets');
     expect($routes['POST pets'])->toBe('api/pet/create-pet');
-    expect($routes['GET pets/<petId>'])->toBe('api/pet/get-pet');
-    expect($routes['PUT pets/<petId>'])->toBe('api/pet/update-pet');
-    expect($routes['DELETE pets/<petId>'])->toBe('api/pet/delete-pet');
-    expect($routes['POST pets/<petId>/photo'])->toBe('api/pet/upload-pet-photo');
+    expect($routes['GET pets/<petId:\S+>'])->toBe('api/pet/get-pet');
+    expect($routes['PUT pets/<petId:\S+>'])->toBe('api/pet/update-pet');
+    expect($routes['DELETE pets/<petId:\S+>'])->toBe('api/pet/delete-pet');
+    expect($routes['POST pets/<petId:\S+>/photo'])->toBe('api/pet/upload-pet-photo');
     expect($routes['GET categories'])->toBe('api/category/list-categories');
 });
 
@@ -1567,7 +1801,185 @@ test('clean option does not fail when target directories do not exist', function
     expect($result->hasWarnings())->toBeFalse();
 });
 
+// ============================================================
+// Schema setter tests
+// ============================================================
 
+test('generated schema includes fluent setters for all properties', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/petstore.json'),
+        baseDir: $this->baseDir,
+    );
+
+    (new Generator($config))->generate();
+
+    $petFile = file_get_contents($this->baseDir . '/api/schemas/Pet.php');
+
+    // Setters for required properties (non-nullable param)
+    expect($petFile)->toContain('public function setName(string $value): static');
+    // Setters for optional/nullable properties (?-prefixed param)
+    expect($petFile)->toContain('public function setTags(?array $value): static');
+    // Setter body
+    expect($petFile)->toContain('$this->name = $value;');
+    expect($petFile)->toContain('return $this;');
+});
+
+test('schema setter uses correct nullable type for optional properties', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [],
+        'components' => [
+            'schemas' => [
+                'Widget' => [
+                    'type' => 'object',
+                    'required' => ['code'],
+                    'properties' => [
+                        'code' => ['type' => 'string'],
+                        'label' => ['type' => 'string'],
+                        'count' => ['type' => 'integer'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    $file = file_get_contents($this->baseDir . '/api/schemas/Widget.php');
+
+    // Required: no nullable prefix
+    expect($file)->toContain('public function setCode(string $value): static');
+    // Optional: nullable prefix
+    expect($file)->toContain('public function setLabel(?string $value): static');
+    expect($file)->toContain('public function setCount(?int $value): static');
+    // All return static
+    expect(substr_count($file, 'return $this;'))->toBe(3);
+});
+
+test('schema with no properties is not generated and emits a warning', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [],
+        'components' => [
+            'schemas' => [
+                'Empty' => ['type' => 'object'],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    $generated = array_map(fn(string $f) => basename($f), $result->getGenerated());
+    expect($generated)->not->toContain('Empty.php');
+    expect(file_exists($this->baseDir . '/api/schemas/Empty.php'))->toBeFalse();
+
+    expect($result->hasWarnings())->toBeTrue();
+    expect(implode(' ', $result->getWarnings()))->toContain('Empty');
+});
+
+// ============================================================
+// --strict flag tests
+// ============================================================
+
+test('GenerateCommand --strict returns failure when warnings exist', function () {
+    // Build a spec with duplicate operationIds to trigger a warning
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/a' => [
+                'get' => [
+                    'operationId' => 'dupOp',
+                    'tags' => ['A'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/b' => [
+                'get' => [
+                    'operationId' => 'dupOp',
+                    'tags' => ['B'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/warn_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $command = new \futuretek\openapi\Command\GenerateCommand();
+    $tester = new \Symfony\Component\Console\Tester\CommandTester($command);
+
+    $tester->execute([
+        'spec' => $specFile,
+        '--base-dir' => $this->baseDir,
+        '--strict' => true,
+    ]);
+
+    expect($tester->getStatusCode())->toBe(\Symfony\Component\Console\Command\Command::FAILURE);
+    expect($tester->getDisplay())->toContain('Strict mode');
+});
+
+test('GenerateCommand --strict passes when no warnings exist', function () {
+    $command = new \futuretek\openapi\Command\GenerateCommand();
+    $tester = new \Symfony\Component\Console\Tester\CommandTester($command);
+
+    $tester->execute([
+        'spec' => realpath(__DIR__ . '/fixtures/petstore.json'),
+        '--base-dir' => $this->baseDir,
+        '--strict' => true,
+    ]);
+
+    expect($tester->getStatusCode())->toBe(\Symfony\Component\Console\Command\Command::SUCCESS);
+});
+
+test('GenerateCommand without --strict succeeds even with warnings', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/a' => [
+                'get' => [
+                    'operationId' => 'dupOp',
+                    'tags' => ['A'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/b' => [
+                'get' => [
+                    'operationId' => 'dupOp',
+                    'tags' => ['B'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/warn_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $command = new \futuretek\openapi\Command\GenerateCommand();
+    $tester = new \Symfony\Component\Console\Tester\CommandTester($command);
+
+    $tester->execute([
+        'spec' => $specFile,
+        '--base-dir' => $this->baseDir,
+    ]);
+
+    expect($tester->getStatusCode())->toBe(\Symfony\Component\Console\Command\Command::SUCCESS);
+});
 
 
 

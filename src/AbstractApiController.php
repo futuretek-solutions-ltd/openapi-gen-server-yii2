@@ -283,6 +283,30 @@ abstract class AbstractApiController extends Controller
         $operationId = $this->resolveOperationId($action->id);
 
         if ($operationId !== null && $result !== null && !($result instanceof Response)) {
+            if ($result instanceof UploadedFileInterface) {
+                // Binary file response — stream it as-is without JSON serialization.
+                $response = \Yii::$app->response;
+                $response->format = Response::FORMAT_RAW;
+                $response->headers->set('Content-Type', $result->getClientMediaType() ?? 'application/octet-stream');
+                if ($result->getClientFilename() !== null) {
+                    $response->headers->set(
+                        'Content-Disposition',
+                        'attachment; filename="' . addslashes($result->getClientFilename()) . '"',
+                    );
+                }
+                if ($result->getSize() !== null) {
+                    $response->headers->set('Content-Length', (string) $result->getSize());
+                }
+                $response->content = $result->getStream()->getContents();
+                $this->logger->info("Response: $operationId (binary file)", [
+                    'status' => $response->statusCode,
+                    'filename' => $result->getClientFilename(),
+                    'size' => $result->getSize(),
+                ]);
+
+                return parent::afterAction($action, $response);
+            }
+
             \Yii::$app->response->format = Response::FORMAT_JSON;
             $serialized = DataMapper::toArray($result);
             $this->logger->info("Response: $operationId", [

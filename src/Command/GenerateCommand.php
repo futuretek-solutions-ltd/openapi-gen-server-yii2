@@ -82,6 +82,12 @@ final class GenerateCommand extends Command
                 null,
                 InputOption::VALUE_NONE,
                 'Clean (remove all .php files from) target directories for enums, schemas and contracts before generation',
+            )
+            ->addOption(
+                'strict',
+                null,
+                InputOption::VALUE_NONE,
+                'Treat warnings as errors (non-zero exit when any warnings are produced)',
             );
     }
 
@@ -114,6 +120,8 @@ final class GenerateCommand extends Command
             cleanTargetDirs: (bool)$input->getOption('clean'),
         );
 
+        $strict = (bool)$input->getOption('strict');
+
         $io->title('PHP OpenAPI Server Generator');
         $io->text("Spec: $specPath");
         $io->text("Base dir: $baseDir");
@@ -127,16 +135,7 @@ final class GenerateCommand extends Command
         $generator = new Generator($config);
         $result = $generator->generate();
 
-        // Show warnings
-        if ($result->hasWarnings()) {
-            $io->warning('Warnings:');
-            foreach ($result->getWarnings() as $warning) {
-                $io->text("  ⚠ $warning");
-            }
-            $io->newLine();
-        }
-
-        // Show errors
+        // Show errors first (fatal)
         if ($result->hasErrors()) {
             $io->error('Errors:');
             foreach ($result->getErrors() as $error) {
@@ -150,6 +149,21 @@ final class GenerateCommand extends Command
         $io->success(count($generated) . ' file(s) generated:');
         foreach ($generated as $file) {
             $io->text("  ✓ $file");
+        }
+
+        // Show warnings at the bottom so they're easy to spot
+        if ($result->hasWarnings()) {
+            $io->newLine();
+            $io->warning('Warnings:');
+            foreach ($result->getWarnings() as $warning) {
+                $io->text("  ⚠ $warning");
+            }
+
+            if ($strict) {
+                $io->newLine();
+                $io->error('Strict mode: warnings treated as errors.');
+                return Command::FAILURE;
+            }
         }
 
         return Command::SUCCESS;

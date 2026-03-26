@@ -297,10 +297,66 @@
           "200": { "description": "OK" }
         }
       }
+    },
+    "/download/binary": {
+      "get": {
+        "operationId": "downloadBinaryFile",
+        "tags": ["Download"],
+        "summary": "Download a binary file (application/octet-stream with format:binary schema)",
+        "responses": {
+          "200": {
+            "description": "Binary file",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/download/text": {
+      "get": {
+        "operationId": "downloadTextFile",
+        "tags": ["Download"],
+        "summary": "Download a plain-text file",
+        "responses": {
+          "200": {
+            "description": "Plain text",
+            "content": {
+              "text/plain": {
+                "schema": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/download/ref-binary": {
+      "get": {
+        "operationId": "downloadRefBinary",
+        "tags": ["Download"],
+        "summary": "Download binary via component $ref (non-object schema must not generate a class)",
+        "responses": {
+          "200": {
+            "description": "Binary via $ref",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "$ref": "#/components/schemas/BinaryData" }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "BinaryData": {
+        "type": "string",
+        "format": "binary",
+        "description": "Raw binary data — a primitive schema that must NOT generate a PHP class"
+      },
       "Item": {
         "type": "object",
         "required": ["id", "name", "type"],

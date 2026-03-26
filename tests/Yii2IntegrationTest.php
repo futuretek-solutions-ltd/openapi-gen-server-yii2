@@ -386,7 +386,7 @@ test('[yii2] urlManager path params with routePrefix', function () {
     $routes = require $this->baseDir . '/config/routes.api.php';
     $app = intApp($routes);
     expect($routes['GET items'])->toBe('v1/item/list-items');
-    expect($routes['PUT mixed/<id>'])->toBe('v1/mixed/update-mixed');
+    expect($routes['PUT mixed/<id:\d+>'])->toBe('v1/mixed/update-mixed');
     expect($app->urlManager->createUrl(['v1/item/list-items']))->toBe('/items');
     expect($app->urlManager->createUrl(['v1/mixed/update-mixed', 'id' => '99']))->toBe('/mixed/99');
 });
@@ -698,8 +698,8 @@ test('[yii2] routePrefix produces correct module-style routes end-to-end', funct
     $routes = require $this->baseDir . '/config/routes.api.php';
     expect($routes['GET pets'])->toBe('api/pet/list-pets');
     expect($routes['POST pets'])->toBe('api/pet/create-pet');
-    expect($routes['GET pets/<petId>'])->toBe('api/pet/get-pet');
-    expect($routes['DELETE pets/<petId>'])->toBe('api/pet/delete-pet');
+    expect($routes['GET pets/<petId:\S+>'])->toBe('api/pet/get-pet');
+    expect($routes['DELETE pets/<petId:\S+>'])->toBe('api/pet/delete-pet');
     expect($routes['GET categories'])->toBe('api/category/list-categories');
     $app = intApp($routes);
     expect($app->urlManager->createUrl(['api/pet/list-pets']))->toBe('/pets');
@@ -2184,3 +2184,93 @@ test('[yii2] spec without root security: operations without own security have em
 });
 
 
+
+
+test('[yii2] action returning UploadedFileInterface sends raw binary response', function () {
+    intGen(realpath(__DIR__ . '/fixtures/edge_cases.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ns = $this->ns;
+
+    // Write binary content to a temp file so Psr7UploadedFile can open it
+    $tmpFile = tempnam(sys_get_temp_dir(), 'test_bin_');
+    file_put_contents($tmpFile, "\x89PNG\r\n\x1a\nBINARY_DATA");
+
+    $ctrlCls = 'BinaryRespCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlCls
+        . ' extends \\' . $ns . '\\contracts\\AbstractDownloadController'
+        . ' implements \\' . $ns . '\\contracts\\DownloadControllerInterface {'
+        . ' public function actionDownloadBinaryFile(): \Psr\Http\Message\UploadedFileInterface {'
+        . '   return new \futuretek\openapi\Middleware\Psr7UploadedFile('
+        . '     ' . var_export($tmpFile, true) . ','
+        . '     18,'
+        . '     UPLOAD_ERR_OK,'
+        . '     \'image.png\','
+        . '     \'image/png\''
+        . '   );'
+        . ' }'
+        . ' public function actionDownloadTextFile(): string { return \'hello\'; }'
+        . ' public function actionDownloadRefBinary(): \Psr\Http\Message\UploadedFileInterface {'
+        . '   return new \futuretek\openapi\Middleware\Psr7UploadedFile(' . var_export($tmpFile, true) . ');'
+        . ' }'
+        . '}'
+    );
+
+    $app = intApp();
+    intRequest($app, 'GET');
+
+    $controller = new $ctrlCls('download', $app);
+    $controller->runAction('download-binary-file', []);
+
+    @unlink($tmpFile);
+
+    expect($app->response->format)->toBe(\yii\web\Response::FORMAT_RAW);
+    expect($app->response->headers->get('Content-Type'))->toBe('image/png');
+    expect($app->response->headers->get('Content-Disposition'))->toBe('attachment; filename="image.png"');
+    expect($app->response->headers->get('Content-Length'))->toBe('18');
+    expect($app->response->content)->toStartWith("\x89PNG");
+});
+
+test('[yii2] action returning UploadedFileInterface without filename omits Content-Disposition', function () {
+    intGen(realpath(__DIR__ . '/fixtures/edge_cases.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ns = $this->ns;
+
+    $tmpFile = tempnam(sys_get_temp_dir(), 'test_noname_');
+    file_put_contents($tmpFile, 'raw binary');
+
+    $ctrlCls = 'BinaryNoNameCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlCls
+        . ' extends \\' . $ns . '\\contracts\\AbstractDownloadController'
+        . ' implements \\' . $ns . '\\contracts\\DownloadControllerInterface {'
+        . ' public function actionDownloadBinaryFile(): \Psr\Http\Message\UploadedFileInterface {'
+        . '   return new \futuretek\openapi\Middleware\Psr7UploadedFile('
+        . '     ' . var_export($tmpFile, true) . ','
+        . '     null, UPLOAD_ERR_OK, null, null'
+        . '   );'
+        . ' }'
+        . ' public function actionDownloadTextFile(): string { return \'hi\'; }'
+        . ' public function actionDownloadRefBinary(): \Psr\Http\Message\UploadedFileInterface {'
+        . '   return new \futuretek\openapi\Middleware\Psr7UploadedFile(' . var_export($tmpFile, true) . ');'
+        . ' }'
+        . '}'
+    );
+
+    $app = intApp();
+    intRequest($app, 'GET');
+
+    $controller = new $ctrlCls('download', $app);
+    $controller->runAction('download-binary-file', []);
+
+    @unlink($tmpFile);
+
+    expect($app->response->format)->toBe(\yii\web\Response::FORMAT_RAW);
+    expect($app->response->headers->get('Content-Type'))->toBe('application/octet-stream');
+    expect($app->response->headers->get('Content-Disposition'))->toBeNull();
+    expect($app->response->content)->toBe('raw binary');
+});

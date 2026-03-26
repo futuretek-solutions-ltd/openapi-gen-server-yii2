@@ -32,6 +32,10 @@ final class SchemaGenerator
         }
 
         foreach ($schemas as $schema) {
+            // Skip schemas with no properties and no parent — nothing useful to generate
+            if (empty($schema->properties) && $schema->parentClass === null) {
+                continue;
+            }
             $this->generateSchema($schema, $dir);
         }
     }
@@ -86,6 +90,20 @@ final class SchemaGenerator
             $propLines = $this->generateProperty($property, $enumNamespace, $namespace);
             foreach ($propLines as $propLine) {
                 $lines[] = '    ' . $propLine;
+            }
+        }
+
+        // Setters
+        if (!empty($schema->properties)) {
+            $lines[] = '';
+            foreach ($schema->properties as $i => $property) {
+                if ($i > 0) {
+                    $lines[] = '';
+                }
+                $setterLines = $this->generateSetter($property);
+                foreach ($setterLines as $setterLine) {
+                    $lines[] = '    ' . $setterLine;
+                }
             }
         }
 
@@ -225,6 +243,24 @@ final class SchemaGenerator
         $lines[] = "public {$nullable}{$phpType} \${$property->name}{$defaultValue};";
 
         return $lines;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function generateSetter(ParsedProperty $property): array
+    {
+        $phpType = $this->resolvePropertyType($property);
+        $nullable = ($property->nullable || !$property->required) ? '?' : '';
+        $methodName = 'set' . ucfirst($property->name);
+
+        return [
+            "public function {$methodName}({$nullable}{$phpType} \$value): static",
+            '{',
+            "    \$this->{$property->name} = \$value;",
+            '    return $this;',
+            '}',
+        ];
     }
 
     private function resolvePropertyType(ParsedProperty $property): string

@@ -61,7 +61,7 @@ final class ControllerInterfaceGenerator
     private function generateInterface(string $controllerName, array $operations, string $dir): void
     {
         // Use operation-level namespace override if present, otherwise global
-        $namespace = $operations[0]->controllerNamespace ?? $this->config->controllerNamespace();
+        $namespace = $this->config->controllerNamespace();
         $schemaNamespace = $this->config->schemaNamespace();
         $enumNamespace = $this->config->enumNamespace();
         $interfaceName = $controllerName . 'ControllerInterface';
@@ -218,6 +218,11 @@ final class ControllerInterfaceGenerator
 
     private const BUILTIN_TYPES = ['int', 'float', 'string', 'bool', 'array', 'object', 'mixed', 'void', 'null', 'true', 'false', 'never'];
 
+    /** PSR / well-known interface short names → their fully-qualified names. */
+    private const KNOWN_INTERFACE_IMPORTS = [
+        'UploadedFileInterface' => 'Psr\\Http\\Message\\UploadedFileInterface',
+    ];
+
     /**
      * @return string[]
      */
@@ -231,7 +236,14 @@ final class ControllerInterfaceGenerator
             }
 
             if ($op->successResponseClass !== null && !in_array($op->successResponseClass, self::BUILTIN_TYPES, true)) {
-                $imports[$op->successResponseClass] = $schemaNamespace . '\\' . $op->successResponseClass;
+                if (isset(self::KNOWN_INTERFACE_IMPORTS[$op->successResponseClass])) {
+                    // Well-known PSR/framework interface — import from its real namespace.
+                    $imports[$op->successResponseClass] = self::KNOWN_INTERFACE_IMPORTS[$op->successResponseClass];
+                } elseif (!str_contains($op->successResponseClass, '\\')) {
+                    // Regular generated schema class.
+                    $imports[$op->successResponseClass] = $schemaNamespace . '\\' . $op->successResponseClass;
+                }
+                // FQCN types (contain backslash) are used as-is in the signature — no import needed.
             }
 
             foreach ($op->parameters as $param) {

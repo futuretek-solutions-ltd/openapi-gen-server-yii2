@@ -14,7 +14,6 @@ final class ParsedOperation
      * @param string $httpMethod HTTP method (GET, POST, PUT, DELETE, PATCH)
      * @param string $path OpenAPI path (e.g., /pets/{petId})
      * @param string $controllerName Resolved controller name
-     * @param string|null $controllerNamespace Resolved controller namespace override (x-ns)
      * @param string $actionName Resolved action method name
      * @param string|null $requestBodyClass DTO class name for request body (null if no body). For array bodies, this is the item class name.
      * @param string|null $requestBodyMediaType Media type for request body
@@ -32,7 +31,6 @@ final class ParsedOperation
         public readonly string $httpMethod,
         public readonly string $path,
         public readonly string $controllerName,
-        public readonly ?string $controllerNamespace,
         public readonly string $actionName,
         public readonly ?string $requestBodyClass = null,
         public readonly ?string $requestBodyMediaType = null,
