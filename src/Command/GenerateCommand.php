@@ -87,7 +87,7 @@ final class GenerateCommand extends Command
                 'strict',
                 null,
                 InputOption::VALUE_NONE,
-                'Treat warnings as errors (non-zero exit when any warnings are produced)',
+                'Prevent generation when any warnings are produced (no files written, non-zero exit)',
             );
     }
 
@@ -133,7 +133,7 @@ final class GenerateCommand extends Command
         $io->newLine();
 
         $generator = new Generator($config);
-        $result = $generator->generate();
+        $result = $generator->generate($strict);
 
         // Show errors first (fatal)
         if ($result->hasErrors()) {
@@ -144,6 +144,17 @@ final class GenerateCommand extends Command
             return Command::FAILURE;
         }
 
+        // In strict mode, warnings abort generation before any files are written
+        if ($strict && $result->hasWarnings()) {
+            $io->warning('Warnings:');
+            foreach ($result->getWarnings() as $warning) {
+                $io->text("  ⚠ $warning");
+            }
+            $io->newLine();
+            $io->error('Strict mode: warnings prevented generation. No files were written.');
+            return Command::FAILURE;
+        }
+
         // Show generated files
         $generated = $result->getGenerated();
         $io->success(count($generated) . ' file(s) generated:');
@@ -151,18 +162,12 @@ final class GenerateCommand extends Command
             $io->text("  ✓ $file");
         }
 
-        // Show warnings at the bottom so they're easy to spot
+        // Show warnings at the bottom so they're easy to spot (non-strict mode)
         if ($result->hasWarnings()) {
             $io->newLine();
             $io->warning('Warnings:');
             foreach ($result->getWarnings() as $warning) {
                 $io->text("  ⚠ $warning");
-            }
-
-            if ($strict) {
-                $io->newLine();
-                $io->error('Strict mode: warnings treated as errors.');
-                return Command::FAILURE;
             }
         }
 

@@ -24,8 +24,11 @@ final class Generator
 
     /**
      * Run the full generation pipeline.
+     *
+     * In strict mode any warning collected during directory cleanup or spec parsing
+     * will abort the run before any files are written.
      */
-    public function generate(): GeneratorResult
+    public function generate(bool $strict = false): GeneratorResult
     {
         $result = new GeneratorResult();
 
@@ -49,6 +52,11 @@ final class Generator
             $parser->parse();
         } catch (\Throwable $e) {
             $result->addError("Failed to parse OpenAPI spec: {$e->getMessage()}");
+            return $result;
+        }
+
+        // In strict mode, abort before writing any files if warnings were produced
+        if ($strict && $result->hasWarnings()) {
             return $result;
         }
 
