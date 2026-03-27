@@ -135,14 +135,18 @@ final class ControllerInterfaceGenerator
         }
 
         if ($op->successResponseClass !== null) {
-            $lines[] = " * @return {$op->successResponseClass}";
+            if ($op->successResponseIsArray) {
+                $lines[] = " * @return {$op->successResponseClass}[]";
+            } else {
+                $lines[] = " * @return {$op->successResponseClass}";
+            }
         }
 
         $lines[] = ' */';
 
         // Method signature
         $params = $this->buildMethodParameters($op);
-        $returnType = $op->successResponseClass ?? 'void';
+        $returnType = $op->successResponseIsArray ? 'array' : ($op->successResponseClass ?? 'void');
 
         $signature = "public function {$op->actionName}($params): $returnType;";
         $lines[] = $signature;
@@ -236,7 +240,12 @@ final class ControllerInterfaceGenerator
             }
 
             if ($op->successResponseClass !== null && !in_array($op->successResponseClass, self::BUILTIN_TYPES, true)) {
-                if (isset(self::KNOWN_INTERFACE_IMPORTS[$op->successResponseClass])) {
+                if ($op->successResponseIsArray) {
+                    // Item class needs to be imported
+                    if (!str_contains($op->successResponseClass, '\\')) {
+                        $imports[$op->successResponseClass] = $schemaNamespace . '\\' . $op->successResponseClass;
+                    }
+                } elseif (isset(self::KNOWN_INTERFACE_IMPORTS[$op->successResponseClass])) {
                     // Well-known PSR/framework interface — import from its real namespace.
                     $imports[$op->successResponseClass] = self::KNOWN_INTERFACE_IMPORTS[$op->successResponseClass];
                 } elseif (!str_contains($op->successResponseClass, '\\')) {

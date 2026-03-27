@@ -686,6 +686,7 @@ final class OpenApiParser
         // Parse responses
         $responses = [];
         $successResponseClass = null;
+        $successResponseIsArray = false;
 
         if ($operation->responses !== null) {
             foreach ($operation->responses as $statusCode => $response) {
@@ -696,20 +697,53 @@ final class OpenApiParser
                 if ($response->content !== null) {
                     foreach ($response->content as $mediaType => $mediaTypeObj) {
                         if ($mediaTypeObj instanceof MediaType && $mediaTypeObj->schema !== null) {
+                            $isSuccessCode = $statusCode >= 200 && $statusCode < 300;
                             if ($this->isJsonLikeMediaType($mediaType)) {
-                                $responseClass = $this->resolveSchemaReference(
-                                    $mediaTypeObj->schema,
-                                    ucfirst($operationId) . 'Response' . $statusCode,
-                                );
+                                $schema = $mediaTypeObj->schema;
+
+                                // Handle array response: resolve the item class instead of returning 'array'
+                                if ($schema instanceof Schema && $schema->type === 'array' && $schema->items !== null) {
+                                    $items = $schema->items;
+                                    $isArray = true;
+                                    if ($items instanceof Schema) {
+                                        if (in_array($items->type, ['integer', 'number', 'string', 'boolean'], true)
+                                            && empty($items->properties) && $items->allOf === null
+                                        ) {
+                                            $itemClass = $this->resolvePhpType($items);
+                                        } else {
+                                            $itemComponentName = $this->getComponentSchemaName($items);
+                                            if ($itemComponentName !== null) {
+                                                $itemClass = $itemComponentName;
+                                            } else {
+                                                $inlineName = ucfirst($operationId) . 'ResponseItem' . $statusCode;
+                                                $this->resolveSchemaReference($items, $inlineName);
+                                                $itemClass = $inlineName;
+                                            }
+                                        }
+                                    } elseif ($items instanceof Reference) {
+                                        $itemClass = $this->extractRefName($items->getJsonReference()->getJsonPointer()->getPointer());
+                                    } else {
+                                        $itemClass = 'mixed';
+                                    }
+                                    $responseClass = $itemClass;
+                                } else {
+                                    $responseClass = $this->resolveSchemaReference(
+                                        $schema,
+                                        ucfirst($operationId) . 'Response' . $statusCode,
+                                    );
+                                    $isArray = false;
+                                }
                             } else {
                                 // Non-JSON content (octet-stream, text/plain, image/*, etc.):
                                 // resolve to a plain PHP type — no DTO class generated.
                                 $responseClass = $this->resolveNonJsonResponseType($mediaTypeObj->schema);
+                                $isArray = false;
                             }
                             $responses[(int)$statusCode] = $responseClass;
 
-                            if ($successResponseClass === null && $statusCode >= 200 && $statusCode < 300) {
+                            if ($successResponseClass === null && $isSuccessCode) {
                                 $successResponseClass = $responseClass;
+                                $successResponseIsArray = $isArray;
                             }
                             break;
                         }
@@ -747,6 +781,7 @@ final class OpenApiParser
             parameters: $parameters,
             responses: $responses,
             successResponseClass: $successResponseClass,
+            successResponseIsArray: $successResponseIsArray,
             description: $operation->description ?? $operation->summary,
             tags: $operation->tags ?? [],
             security: $security,
@@ -888,6 +923,18 @@ final class OpenApiParser
             $phpType = $this->resolveScalarPhpType($schema);
             $format = $schema->format;
             $nullable = $schema->nullable ?? false;
+
+            if ($param->in === 'query' && in_array($format, ['date', 'date-time'], true)) {
+                $this->result->addWarning(
+                    "Query parameter '{$param->name}' uses format '{$format}' which may be incompatible with some client generators — consider moving date parameters into a request body schema instead.",
+                );
+            }
+
+            if ($param->in === 'query' && in_array($format, ['binary', 'byte'], true)) {
+                $this->result->addWarning(
+                    "Query parameter '{$param->name}' uses format '{$format}' — binary data cannot be reliably transported as a query parameter, use a multipart/form-data request body schema instead.",
+                );
+            }
 
             // Check if this is a resolved $ref to a known enum
             $componentEnumName = $this->getComponentEnumName($schema);

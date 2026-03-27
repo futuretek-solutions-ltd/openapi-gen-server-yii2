@@ -245,6 +245,129 @@ test('warns on inline enum without x-enum name', function () {
     expect($warnings)->toContain("x-enum");
 });
 
+test('warns on date and date-time query parameters', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/events' => [
+                'get' => [
+                    'operationId' => 'listEvents',
+                    'tags' => ['Event'],
+                    'parameters' => [
+                        [
+                            'name' => 'from',
+                            'in' => 'query',
+                            'schema' => ['type' => 'string', 'format' => 'date'],
+                        ],
+                        [
+                            'name' => 'createdAt',
+                            'in' => 'query',
+                            'schema' => ['type' => 'string', 'format' => 'date-time'],
+                        ],
+                    ],
+                    'responses' => ['200' => ['description' => 'OK']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(specPath: realpath($specFile), baseDir: $this->baseDir);
+    $result = (new Generator($config))->generate();
+
+    expect($result->hasWarnings())->toBeTrue();
+    $warnings = implode("\n", $result->getWarnings());
+    expect($warnings)->toContain("'from'");
+    expect($warnings)->toContain("'date'");
+    expect($warnings)->toContain("'createdAt'");
+    expect($warnings)->toContain("'date-time'");
+});
+
+test('does not warn on date path or header parameters', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/events/{eventDate}' => [
+                'get' => [
+                    'operationId' => 'getEvent',
+                    'tags' => ['Event'],
+                    'parameters' => [
+                        [
+                            'name' => 'eventDate',
+                            'in' => 'path',
+                            'required' => true,
+                            'schema' => ['type' => 'string', 'format' => 'date'],
+                        ],
+                        [
+                            'name' => 'X-Since',
+                            'in' => 'header',
+                            'schema' => ['type' => 'string', 'format' => 'date-time'],
+                        ],
+                    ],
+                    'responses' => ['200' => ['description' => 'OK']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(specPath: realpath($specFile), baseDir: $this->baseDir);
+    $result = (new Generator($config))->generate();
+
+    $dateWarnings = array_filter($result->getWarnings(), fn($w) => str_contains($w, 'date'));
+    expect($dateWarnings)->toBeEmpty();
+});
+
+test('warns on binary and byte query parameters', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/upload' => [
+                'get' => [
+                    'operationId' => 'uploadCheck',
+                    'tags' => ['Upload'],
+                    'parameters' => [
+                        [
+                            'name' => 'fileData',
+                            'in' => 'query',
+                            'schema' => ['type' => 'string', 'format' => 'binary'],
+                        ],
+                        [
+                            'name' => 'thumbnail',
+                            'in' => 'query',
+                            'schema' => ['type' => 'string', 'format' => 'byte'],
+                        ],
+                    ],
+                    'responses' => ['200' => ['description' => 'OK']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(specPath: realpath($specFile), baseDir: $this->baseDir);
+    $result = (new Generator($config))->generate();
+
+    expect($result->hasWarnings())->toBeTrue();
+    $warnings = implode("\n", $result->getWarnings());
+    expect($warnings)->toContain("'fileData'");
+    expect($warnings)->toContain("'binary'");
+    expect($warnings)->toContain("'thumbnail'");
+    expect($warnings)->toContain("'byte'");
+});
+
 test('errors on missing operationId', function () {
     $spec = [
         'openapi' => '3.0.3',
@@ -530,7 +653,7 @@ test('operation x-controller overrides path x-controller', function () {
     expect($generated)->not->toContain('ReportControllerInterface.php');
 });
 
-test('array response type returns plain array', function () {
+test('array response type returns typed array annotation', function () {
     $config = new Config(
         specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
         baseDir: $this->baseDir,
@@ -541,9 +664,13 @@ test('array response type returns plain array', function () {
 
     $file = file_get_contents($this->baseDir . '/api/contracts/CustomReportControllerInterface.php');
 
-    // Response is type: array, items: $ref Item — should return 'array', not a wrapper DTO
+    // Response is type: array, items: $ref Item — PHP type hint is 'array', docblock uses Item[]
     expect($file)->toContain('public function actionListReports(): array;');
-    // Should NOT import a ListReportsResponse200 class
+    expect($file)->toContain('@return Item[]');
+    // Item class must be imported
+    expect($file)->toContain('use ');
+    expect($file)->toContain('Item;');
+    // Should NOT import a ListReportsResponse200 wrapper class
     expect($file)->not->toContain('ListReportsResponse200');
 });
 

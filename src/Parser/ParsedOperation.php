@@ -21,7 +21,8 @@ final class ParsedOperation
      * @param bool $requestBodyIsArray Whether request body is an array of $requestBodyClass items
      * @param ParsedParameter[] $parameters All parameters (path, query, header, cookie)
      * @param array<int, string> $responses Map of HTTP status code => DTO class name
-     * @param string|null $successResponseClass Primary success response DTO class name
+     * @param string|null $successResponseClass Primary success response DTO class name. For array responses, this is the item class name.
+     * @param bool $successResponseIsArray Whether success response is an array of $successResponseClass items
      * @param string|null $description Operation description
      * @param string[] $tags Operation tags
      * @param string[] $security Security scheme names
@@ -39,6 +40,7 @@ final class ParsedOperation
         public readonly array $parameters = [],
         public readonly array $responses = [],
         public readonly ?string $successResponseClass = null,
+        public readonly bool $successResponseIsArray = false,
         public readonly ?string $description = null,
         public readonly array $tags = [],
         public readonly array $security = [],
