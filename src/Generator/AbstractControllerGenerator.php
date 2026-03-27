@@ -115,8 +115,12 @@ final class AbstractControllerGenerator
                     }
                     $lines[] = "            'bodyIsArray' => true,";
                 } else {
-                    $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;
-                    $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
+                    if (in_array($op->requestBodyClass, self::BUILTIN_TYPES, true)) {
+                        $lines[] = "            'bodyType' => '{$op->requestBodyClass}',";
+                    } else {
+                        $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;
+                        $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
+                    }
                 }
                 $lines[] = "            'bodyRequired' => " . ($op->requestBodyRequired ? 'true' : 'false') . ',';
                 $lines[] = "            'mediaType' => '{$op->requestBodyMediaType}',";

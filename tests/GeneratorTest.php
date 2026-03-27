@@ -1835,6 +1835,121 @@ test('optional primitive array request body generates nullable array', function 
     expect($interfaceFile)->toContain('@param int[] $body');
 });
 
+test('optional body with required path param places required param first', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/items/{id}/notes' => [
+                'post' => [
+                    'operationId' => 'addItemNote',
+                    'tags' => ['Item'],
+                    'parameters' => [
+                        [
+                            'in' => 'path',
+                            'name' => 'id',
+                            'required' => true,
+                            'schema' => ['type' => 'integer'],
+                        ],
+                    ],
+                    'requestBody' => [
+                        'required' => false,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => ['type' => 'string'],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+        namespace: 'app\\modules\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    $interfaceFile = file_get_contents($this->baseDir . '/modules/api/contracts/ItemControllerInterface.php');
+
+    // Required $id must come before optional $body to avoid PHP deprecation
+    expect($interfaceFile)->toContain('public function actionAddItemNote(int $id, ?string $body = null): void;');
+});
+
+test('scalar primitive request body (integer) uses bodyType not bodyClass', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/issues/{id}/priority' => [
+                'post' => [
+                    'operationId' => 'changeIssuePriority',
+                    'tags' => ['Issue'],
+                    'parameters' => [
+                        [
+                            'in' => 'path',
+                            'name' => 'id',
+                            'required' => true,
+                            'schema' => ['type' => 'integer'],
+                        ],
+                    ],
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'integer',
+                                    'description' => 'Issue priority',
+                                ],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+        namespace: 'app\\modules\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    $abstractFile = file_get_contents($this->baseDir . '/modules/api/contracts/AbstractIssueController.php');
+
+    // Scalar primitive body must use bodyType, never bodyClass with a namespace-qualified type
+    expect($abstractFile)->toContain("'bodyType' => 'int'");
+    expect($abstractFile)->not->toContain('bodyClass');
+
+    $interfaceFile = file_get_contents($this->baseDir . '/modules/api/contracts/IssueControllerInterface.php');
+    expect($interfaceFile)->toContain('public function actionChangeIssuePriority(int $body, int $id): void;');
+});
+
 test('clean option removes old .php files from target directories before generation', function () {
     // First, generate normally so directories and files are created
     $config = new Config(
@@ -2056,6 +2171,10 @@ test('GenerateCommand --strict returns failure when warnings exist', function ()
 
     expect($tester->getStatusCode())->toBe(\Symfony\Component\Console\Command\Command::FAILURE);
     expect($tester->getDisplay())->toContain('Strict mode');
+
+    // No files must have been written
+    $phpFiles = glob($this->baseDir . '/**/*.php', GLOB_BRACE) ?: [];
+    expect($phpFiles)->toBeEmpty('strict mode must not write any files when warnings exist');
 });
 
 test('GenerateCommand --strict passes when no warnings exist', function () {
@@ -2108,5 +2227,37 @@ test('GenerateCommand without --strict succeeds even with warnings', function ()
     expect($tester->getStatusCode())->toBe(\Symfony\Component\Console\Command\Command::SUCCESS);
 });
 
+test('Generator::generate strict=true produces no files when warnings exist', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/a' => [
+                'get' => [
+                    'operationId' => 'dupOp',
+                    'tags' => ['A'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/b' => [
+                'get' => [
+                    'operationId' => 'dupOp',
+                    'tags' => ['B'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
 
+    $specFile = $this->baseDir . '/warn_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(specPath: $specFile, baseDir: $this->baseDir);
+    $result = (new Generator($config))->generate(strict: true);
+
+    expect($result->hasWarnings())->toBeTrue();
+    expect($result->hasErrors())->toBeFalse();
+    expect($result->getGenerated())->toBeEmpty('no files must be written when strict mode aborts on warnings');
+});
 

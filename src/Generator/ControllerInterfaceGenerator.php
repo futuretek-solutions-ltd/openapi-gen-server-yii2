@@ -156,42 +156,40 @@ final class ControllerInterfaceGenerator
 
     private function buildMethodParameters(ParsedOperation $op): string
     {
-        $params = [];
+        $required = [];
+        $optional = [];
 
-        // Body first (if present)
+        // Body parameter — bucket by required/optional
         if ($op->requestBodyClass !== null) {
-            $nullable = !$op->requestBodyRequired ? '?' : '';
-            $default = !$op->requestBodyRequired ? ' = null' : '';
-            if ($op->requestBodyIsArray) {
-                $params[] = "{$nullable}array \$body{$default}";
+            $type = $op->requestBodyIsArray ? 'array' : $op->requestBodyClass;
+            if ($op->requestBodyRequired) {
+                $required[] = "{$type} \$body";
             } else {
-                $params[] = "{$nullable}{$op->requestBodyClass} \$body{$default}";
+                $optional[] = "?{$type} \$body = null";
             }
         }
 
-        // Then parameters in order: path, query, header, cookie
+        // Parameters in order: path, query, header, cookie (required before optional within each group)
         $ordered = $this->orderParameters($op->parameters);
 
         foreach ($ordered as $param) {
             $type = $param->type;
-            $nullable = '';
-            $default = '';
 
             if (!$param->required) {
-                $nullable = '?';
                 if ($param->default !== null) {
                     $default = ' = ' . $this->exportDefault($param->default);
                 } else {
                     $default = ' = null';
                 }
-            } elseif ($param->nullable) {
-                $nullable = '?';
+                $optional[] = "?{$type} \${$param->phpName}{$default}";
+            } else {
+                $nullable = $param->nullable ? '?' : '';
+                $required[] = "{$nullable}{$type} \${$param->phpName}";
             }
-
-            $params[] = "{$nullable}{$type} \${$param->phpName}{$default}";
         }
 
-        return implode(', ', $params);
+        // Required parameters must always precede optional ones
+        return implode(', ', array_merge($required, $optional));
     }
 
     /**
