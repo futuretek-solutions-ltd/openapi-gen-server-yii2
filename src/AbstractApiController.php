@@ -223,21 +223,28 @@ abstract class AbstractApiController extends Controller
         }
 
         $request = \Yii::$app->request;
-        $args = [];
+        $resolvedArguments = [];
 
-        // Body parameter (always first if present)
+        // Resolve the request body first, then place it according to the action signature.
         if (isset($meta['bodyClass'])) {
             $discriminator = $meta['discriminator'] ?? null;
             if (!empty($meta['bodyIsArray'])) {
                 $body = $this->deserializeArrayBody($meta['bodyClass'], $meta['mediaType'] ?? 'application/json');
-                $args[] = $body;
             } else {
                 $body = $this->deserializeBody($meta['bodyClass'], $meta['mediaType'] ?? 'application/json', $discriminator);
-                $args[] = $body;
             }
-        } elseif (isset($meta['bodyType']) && !empty($meta['bodyIsArray'])) {
-            $body = $this->deserializePrimitiveArrayBody($meta['bodyType'], $meta['mediaType'] ?? 'application/json');
-            $args[] = $body;
+            $resolvedArguments['body'] = $body;
+        } elseif (isset($meta['bodyType'])) {
+            if (!empty($meta['bodyIsArray'])) {
+                $body = $this->deserializePrimitiveArrayBody($meta['bodyType'], $meta['mediaType'] ?? 'application/json');
+            } else {
+                $body = $this->deserializePrimitiveBody(
+                    $meta['bodyType'],
+                    $meta['mediaType'] ?? 'application/json',
+                    (bool) ($meta['bodyRequired'] ?? false),
+                );
+            }
+            $resolvedArguments['body'] = $body;
         }
 
         // Remaining parameters: path, query, header, cookie
@@ -245,6 +252,7 @@ abstract class AbstractApiController extends Controller
         $resolvedParams = [];
         foreach ($paramsMeta as $paramMeta) {
             $name = $paramMeta['name'];
+            $phpName = $paramMeta['phpName'] ?? $name;
             $in = $paramMeta['in'];
             $type = $paramMeta['type'] ?? 'string';
             $required = $paramMeta['required'] ?? false;
@@ -252,25 +260,25 @@ abstract class AbstractApiController extends Controller
             $enumClass = $paramMeta['enumClass'] ?? null;
 
             $value = match ($in) {
-                'path' => $params[$name] ?? null,
+                'path' => $params[$name] ?? $params[$phpName] ?? null,
                 'query' => $request->getQueryParam($name, $default),
                 'header' => $request->getHeaders()->get($name, $default),
                 'cookie' => $request->getCookies()->getValue($name, $default),
-                default => $params[$name] ?? $default,
+                default => $params[$name] ?? $params[$phpName] ?? $default,
             };
 
             // Type cast
             $value = $this->castParameterValue($value, $type, $enumClass);
 
-            $resolvedParams[$name] = $this->summarizeValue($value);
-            $args[] = $value;
+            $resolvedParams[$phpName] = $this->summarizeValue($value);
+            $resolvedArguments[$phpName] = $value;
         }
 
         if (!empty($resolvedParams)) {
             $this->logger->info("Params for $operationId", $resolvedParams);
         }
 
-        return $args;
+        return $this->orderArgumentsForAction($action, $resolvedArguments);
     }
 
     /**
@@ -490,6 +498,41 @@ abstract class AbstractApiController extends Controller
     }
 
     /**
+     * Deserialize a request body that is a single primitive value (e.g., int, string, bool).
+     */
+    private function deserializePrimitiveBody(string $type, string $mediaType, bool $required): mixed
+    {
+        $request = \Yii::$app->request;
+        $rawBody = $request->getRawBody();
+
+        if ($rawBody === '' || $rawBody === false) {
+            if (!$required) {
+                $this->logger->info("Empty primitive body ({$type})");
+                return null;
+            }
+
+            throw new \RuntimeException('Invalid request body: expected scalar value');
+        }
+
+        $data = str_contains($mediaType, 'json')
+            ? json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR)
+            : $rawBody;
+
+        if (is_array($data) || is_object($data)) {
+            throw new \RuntimeException('Invalid request body: expected scalar value');
+        }
+
+        $value = $this->castParameterValue($data, $type, null);
+
+        $this->logger->info("Body deserialized → {$type}", [
+            'mediaType' => $mediaType,
+            'data' => $this->summarizeValue($value),
+        ]);
+
+        return $value;
+    }
+
+    /**
      * Deserialize a request body that is a JSON array of DTO objects.
      *
      * @param class-string $dtoClass The DTO class for each item
@@ -516,6 +559,30 @@ abstract class AbstractApiController extends Controller
         ]);
 
         return array_map(fn($item) => DataMapper::toObject($item, $dtoClass), $data);
+    }
+
+    /**
+     * Order resolved arguments to match the reflected action signature.
+     */
+    private function orderArgumentsForAction(object $action, array $resolvedArguments): array
+    {
+        if (!property_exists($action, 'actionMethod') || !is_string($action->actionMethod)) {
+            return array_values($resolvedArguments);
+        }
+
+        $method = new \ReflectionMethod($this, $action->actionMethod);
+        $orderedArguments = [];
+
+        foreach ($method->getParameters() as $parameter) {
+            $name = $parameter->getName();
+            if (array_key_exists($name, $resolvedArguments)) {
+                $orderedArguments[] = $resolvedArguments[$name];
+            } elseif ($parameter->isDefaultValueAvailable()) {
+                $orderedArguments[] = $parameter->getDefaultValue();
+            }
+        }
+
+        return $orderedArguments;
     }
 
     /**

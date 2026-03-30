@@ -666,6 +666,136 @@ test('[yii2] primitive array request body (string[]) generates bodyType meta', f
     expect($interfaceFile)->toContain('@param string[] $body');
 });
 
+test('[yii2] scalar primitive request body (int) is deserialized, cast, and passed to action', function () {
+    $spec = json_encode([
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/issues/{id}/priority' => [
+                'post' => [
+                    'operationId' => 'changeIssuePriority',
+                    'tags' => ['Issue'],
+                    'parameters' => [
+                        [
+                            'in' => 'path',
+                            'name' => 'id',
+                            'required' => true,
+                            'schema' => ['type' => 'integer'],
+                        ],
+                    ],
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => ['type' => 'integer'],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => [
+                            'description' => 'OK',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => ['type' => 'integer'],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ]);
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($this->baseDir . '/spec.json', $spec);
+    intGen(realpath($this->baseDir . '/spec.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ns = $this->ns;
+    $ctrlClass = 'ScalarIntCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlClass
+        . ' extends \\' . $ns . '\\contracts\\AbstractIssueController'
+        . ' implements \\' . $ns . '\\contracts\\IssueControllerInterface {'
+        . ' public function actionChangeIssuePriority(int $body, int $id): int { return $body + $id; }'
+        . '}'
+    );
+
+    $app = intApp();
+    intRequest($app, 'POST', '5');
+
+    $controller = new $ctrlClass('issue', $app);
+    $result = $controller->runAction('change-issue-priority', ['id' => '7']);
+
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    expect($result->data)->toBe(12);
+});
+
+test('[yii2] optional scalar body is ordered by action signature and does not displace required params', function () {
+    $spec = json_encode([
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/items/{id}/notes' => [
+                'post' => [
+                    'operationId' => 'addItemNote',
+                    'tags' => ['Item'],
+                    'parameters' => [
+                        [
+                            'in' => 'path',
+                            'name' => 'id',
+                            'required' => true,
+                            'schema' => ['type' => 'integer'],
+                        ],
+                    ],
+                    'requestBody' => [
+                        'required' => false,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => ['type' => 'string'],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => [
+                            'description' => 'OK',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => ['type' => 'string'],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ]);
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($this->baseDir . '/spec.json', $spec);
+    intGen(realpath($this->baseDir . '/spec.json'), $this->baseDir, $this->ns);
+    $this->autoloader = intAutoload($this->baseDir);
+    intLoad($this->baseDir, $this->nsPath);
+
+    $ns = $this->ns;
+    $ctrlClass = 'ScalarOptionalCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlClass
+        . ' extends \\' . $ns . '\\contracts\\AbstractItemController'
+        . ' implements \\' . $ns . '\\contracts\\ItemControllerInterface {'
+        . ' public function actionAddItemNote(int $id, ?string $body = null): string { return $id . ":" . ($body ?? ""); }'
+        . '}'
+    );
+
+    $app = intApp();
+    intRequest($app, 'POST', json_encode('hello'));
+
+    $controller = new $ctrlClass('item', $app);
+    $result = $controller->runAction('add-item-note', ['id' => '3']);
+
+    expect($result)->toBeInstanceOf(\yii\web\Response::class);
+    expect($result->data)->toBe('3:hello');
+});
+
 // --- Module namespace ---
 
 test('[yii2] module namespace generates correct directory structure', function () {
