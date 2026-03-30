@@ -450,7 +450,7 @@ final class OpenApiParser
         }
 
         // Map type (object with additionalProperties)
-        if ($schema->type === 'object' && $schema->additionalProperties !== null && $schema->properties === null) {
+        if ($schema->type === 'object' && $schema->additionalProperties !== null && empty($schema->properties)) {
             $addProps = $schema->additionalProperties;
             if ($addProps instanceof Schema) {
                 $addPropsSchemaName = $this->getComponentSchemaName($addProps);

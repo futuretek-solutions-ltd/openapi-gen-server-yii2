@@ -217,7 +217,7 @@ final class SchemaGenerator
             $valueType = $this->isClassName($property->mapValueType)
                 ? $property->mapValueType . '::class'
                 : "'{$property->mapValueType}'";
-            $lines[] = "#[MapType(valueType: $valueType)]";
+            $lines[] = "#[MapType('string', $valueType)]";
         }
 
         // Property declaration

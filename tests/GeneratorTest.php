@@ -476,8 +476,10 @@ test('map type with additionalProperties generates correct schema', function () 
 
     $file = file_get_contents($this->baseDir . '/api/schemas/Item.php');
 
-    // metadata is additionalProperties: string => should be object (map)
-    expect($file)->toContain('public ?object $metadata = null;');
+    // metadata is additionalProperties: string => should be map with MapType
+    expect($file)->toContain('@var array<string, string>|null');
+    expect($file)->toContain('#[MapType(\'string\', \'string\')]');
+    expect($file)->toContain('public ?array $metadata = null;');
 });
 
 test('self-referencing array property generates correct ArrayType', function () {
@@ -2259,5 +2261,22 @@ test('Generator::generate strict=true produces no files when warnings exist', fu
     expect($result->hasWarnings())->toBeTrue();
     expect($result->hasErrors())->toBeFalse();
     expect($result->getGenerated())->toBeEmpty('no files must be written when strict mode aborts on warnings');
+});
+
+test('map properties produce MapType attributes', function () {
+    $config = new Config(
+        specPath: realpath(__DIR__ . '/fixtures/map_property.json'),
+        baseDir: $this->baseDir,
+    );
+
+    $result = (new Generator($config))->generate();
+    expect($result->hasErrors())->toBeFalse();
+
+    $exampleFile = file_get_contents($this->baseDir . '/api/schemas/Example.php');
+
+    expect($exampleFile)->toContain('use futuretek\\datamapper\\attributes\\MapType;');
+    expect($exampleFile)->toContain('#[MapType(\'string\', AvailableCapacity::class)]');
+    expect($exampleFile)->toContain('@var array<string, AvailableCapacity>|null');
+    expect($exampleFile)->toContain('public ?array $availableCapacity = null;');
 });
 

@@ -308,7 +308,7 @@ abstract class AbstractApiController extends Controller
             }
 
             \Yii::$app->response->format = Response::FORMAT_JSON;
-            $serialized = DataMapper::toArray($result);
+            $serialized = is_scalar($result) ? $result : DataMapper::toArray($result);
             $this->logger->info("Response: $operationId", [
                 'status' => \Yii::$app->response->statusCode,
                 'data' => $this->summarizeData($serialized),

@@ -1,0 +1,50 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Map Property Test",
+    "version": "1.0"
+  },
+  "paths": {
+    "/sample": {
+      "get": {
+        "operationId": "getExample",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Example"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Example": {
+        "type": "object",
+        "properties": {
+          "availableCapacity": {
+            "type": "object",
+            "description": "Available capacity by date",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AvailableCapacity"
+            }
+          }
+        }
+      },
+      "AvailableCapacity": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}
