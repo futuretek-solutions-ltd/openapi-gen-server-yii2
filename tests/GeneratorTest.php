@@ -88,6 +88,11 @@ test('generates correct Pet DTO with DataMapper attributes', function () {
     expect($petFile)->toContain("#[Format('date-time')]");
     expect($petFile)->toContain("#[Format('date')]");
 
+    // Array of date items → DateTimeInterface[] with ArrayType format argument
+    expect($petFile)->toContain("#[ArrayType(DateTimeInterface::class, format: 'date')]");
+    expect($petFile)->toContain('@var DateTimeInterface[]');
+    expect($petFile)->toContain('public ?array $vaccinationDates');
+
     // UploadedFileInterface not present on Pet (only on PetPhotoUpload)
     expect($petFile)->not->toContain('UploadedFileInterface');
 });

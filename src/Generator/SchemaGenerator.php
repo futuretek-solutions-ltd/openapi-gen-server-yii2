@@ -131,6 +131,10 @@ final class SchemaGenerator
                 $imports['DateTimeInterface'] = 'DateTimeInterface';
             }
 
+            if ($property->arrayItemType === 'DateTimeInterface') {
+                $imports['DateTimeInterface'] = 'DateTimeInterface';
+            }
+
             if ($property->arrayItemType !== null && ($this->isClassName($property->arrayItemType) || $property->isFile)) {
                 $hasArrayType = true;
 
@@ -206,7 +210,8 @@ final class SchemaGenerator
         }
 
         if ($property->arrayItemType !== null && $this->isClassName($property->arrayItemType)) {
-            $lines[] = "#[ArrayType({$property->arrayItemType}::class)]";
+            $formatArg = $property->arrayItemFormat !== null ? ", format: '{$property->arrayItemFormat}'" : '';
+            $lines[] = "#[ArrayType({$property->arrayItemType}::class{$formatArg})]";
         }
 
         if ($property->arrayItemType !== null && $property->isFile) {

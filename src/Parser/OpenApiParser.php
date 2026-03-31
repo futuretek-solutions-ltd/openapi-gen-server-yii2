@@ -357,6 +357,7 @@ final class OpenApiParser
         $default = $schema->default;
         $ref = null;
         $arrayItemType = null;
+        $arrayItemFormat = null;
         $mapValueType = null;
         $enumRef = null;
         $isFile = false;
@@ -440,6 +441,10 @@ final class OpenApiParser
                         // Array of file uploads
                         $arrayItemType = '\\Psr\\Http\\Message\\UploadedFileInterface';
                         $isFile = true;
+                    } elseif ($items->type === 'string' && ($items->format === 'date' || $items->format === 'date-time')) {
+                        // Array of date/date-time strings → DateTimeInterface items
+                        $arrayItemType = 'DateTimeInterface';
+                        $arrayItemFormat = $items->format;
                     } else {
                         $arrayItemType = $this->resolveScalarPhpType($items);
                     }
@@ -493,6 +498,7 @@ final class OpenApiParser
             description: $description,
             ref: $ref,
             arrayItemType: $arrayItemType,
+            arrayItemFormat: $arrayItemFormat,
             mapValueType: $mapValueType,
             enumRef: $enumRef,
             default: $default,

@@ -320,6 +320,14 @@
             "format": "date",
             "nullable": true,
             "description": "Pet birth date"
+          },
+          "vaccinationDates": {
+            "type": "array",
+            "description": "Dates of vaccinations",
+            "items": {
+              "type": "string",
+              "format": "date"
+            }
           }
         }
       },

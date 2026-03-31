@@ -18,6 +18,7 @@ final class ParsedProperty
      * @param string|null $description Property description
      * @param string|null $ref Reference to another schema class name
      * @param string|null $arrayItemType For array properties, the item type class name or scalar
+     * @param string|null $arrayItemFormat OpenAPI format of array items (date, date-time, etc.)
      * @param string|null $mapValueType For map (additionalProperties) properties, the value type
      * @param string|null $enumRef Reference to an enum class name
      * @param mixed $default Default value
@@ -32,6 +33,7 @@ final class ParsedProperty
         public readonly ?string $description = null,
         public readonly ?string $ref = null,
         public readonly ?string $arrayItemType = null,
+        public readonly ?string $arrayItemFormat = null,
         public readonly ?string $mapValueType = null,
         public readonly ?string $enumRef = null,
         public readonly mixed $default = null,
