@@ -2285,3 +2285,175 @@ test('map properties produce MapType attributes', function () {
     expect($exampleFile)->toContain('public ?array $availableCapacity = null;');
 });
 
+// ============================================================
+// Schema setter camelCase tests
+// ============================================================
+
+test('setter for snake_case property is named in camelCase', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [],
+        'components' => [
+            'schemas' => [
+                'Birth' => [
+                    'type' => 'object',
+                    'required' => ['datum_vzniku'],
+                    'properties' => [
+                        'datum_vzniku' => ['type' => 'string', 'format' => 'date'],
+                        'first_name' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/snake_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    $file = file_get_contents($this->baseDir . '/api/schemas/Birth.php');
+
+    // snake_case → camelCase setter names
+    expect($file)->toContain('public function setDatumVzniku(');
+    expect($file)->toContain('public function setFirstName(');
+
+    // Old style must NOT appear
+    expect($file)->not->toContain('setDatum_vzniku');
+    expect($file)->not->toContain('setFirst_name');
+
+    // Property assignments still reference the original snake_case names
+    expect($file)->toContain('$this->datum_vzniku = $value;');
+    expect($file)->toContain('$this->first_name = $value;');
+});
+
+test('setter name for property without underscores is unchanged', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [],
+        'components' => [
+            'schemas' => [
+                'Simple' => [
+                    'type' => 'object',
+                    'required' => ['name'],
+                    'properties' => [
+                        'name' => ['type' => 'string'],
+                        'count' => ['type' => 'integer'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/simple_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    $file = file_get_contents($this->baseDir . '/api/schemas/Simple.php');
+
+    expect($file)->toContain('public function setName(string $value): static');
+    expect($file)->toContain('public function setCount(?int $value): static');
+});
+
+test('duplicate setter name warning when two properties map to the same camelCase setter', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [],
+        'components' => [
+            'schemas' => [
+                'Conflict' => [
+                    'type' => 'object',
+                    'required' => ['datum_vzniku', 'datumVzniku'],
+                    'properties' => [
+                        'datum_vzniku' => ['type' => 'string'],
+                        'datumVzniku' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/dup_setter_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    expect($result->hasWarnings())->toBeTrue();
+
+    $warnings = implode(' ', $result->getWarnings());
+    expect($warnings)->toContain('Conflict');
+    expect($warnings)->toContain('datum_vzniku');
+    expect($warnings)->toContain('datumVzniku');
+    expect($warnings)->toContain('setDatumVzniku');
+});
+
+test('duplicate setter warning includes schema name and both colliding property names', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [],
+        'components' => [
+            'schemas' => [
+                'MySchema' => [
+                    'type' => 'object',
+                    'required' => ['foo_bar'],
+                    'properties' => [
+                        'foo_bar' => ['type' => 'string'],
+                        'fooBar' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/dup2_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    expect($result->hasWarnings())->toBeTrue();
+
+    $warning = $result->getWarnings()[0];
+    expect($warning)->toContain("Schema 'MySchema'");
+    expect($warning)->toContain("'foo_bar'");
+    expect($warning)->toContain("'fooBar'");
+    expect($warning)->toContain("'setFooBar'");
+});
+
+test('no duplicate setter warning when all property names map to distinct camelCase names', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [],
+        'components' => [
+            'schemas' => [
+                'Clean' => [
+                    'type' => 'object',
+                    'required' => ['datum_vzniku'],
+                    'properties' => [
+                        'datum_vzniku' => ['type' => 'string'],
+                        'datum_zaniku' => ['type' => 'string'],
+                        'name' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/no_dup_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    expect($result->hasWarnings())->toBeFalse();
+});
+

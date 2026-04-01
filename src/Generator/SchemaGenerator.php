@@ -95,6 +95,8 @@ final class SchemaGenerator
 
         // Setters
         if (!empty($schema->properties)) {
+            $this->warnDuplicateSetterNames($schema);
+
             $lines[] = '';
             foreach ($schema->properties as $i => $property) {
                 if ($i > 0) {
@@ -257,7 +259,7 @@ final class SchemaGenerator
     {
         $phpType = $this->resolvePropertyType($property);
         $nullable = ($property->nullable || !$property->required) ? '?' : '';
-        $methodName = 'set' . ucfirst($property->name);
+        $methodName = $this->setterName($property);
 
         return [
             "public function {$methodName}({$nullable}{$phpType} \$value): static",
@@ -266,6 +268,26 @@ final class SchemaGenerator
             '    return $this;',
             '}',
         ];
+    }
+
+    private function setterName(ParsedProperty $property): string
+    {
+        return 'set' . str_replace('_', '', ucwords($property->name, '_'));
+    }
+
+    private function warnDuplicateSetterNames(ParsedSchema $schema): void
+    {
+        $seen = [];
+        foreach ($schema->properties as $property) {
+            $name = $this->setterName($property);
+            if (isset($seen[$name])) {
+                $this->result->addWarning(
+                    "Schema '{$schema->name}': properties '{$seen[$name]}' and '{$property->name}' both generate setter '{$name}'."
+                );
+            } else {
+                $seen[$name] = $property->name;
+            }
+        }
     }
 
     private function resolvePropertyType(ParsedProperty $property): string
