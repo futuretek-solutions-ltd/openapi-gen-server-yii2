@@ -195,9 +195,9 @@ test('generates PetStatus enum with descriptions', function () {
     $enumFile = file_get_contents($this->baseDir . '/api/enums/PetStatus.php');
 
     expect($enumFile)->toContain('enum PetStatus: string');
-    expect($enumFile)->toContain("case Available = 'available';");
-    expect($enumFile)->toContain("case Pending = 'pending';");
-    expect($enumFile)->toContain("case Sold = 'sold';");
+    expect($enumFile)->toContain("case AVAILABLE = 'available';");
+    expect($enumFile)->toContain("case PENDING = 'pending';");
+    expect($enumFile)->toContain("case SOLD = 'sold';");
 
     // Descriptions as docblocks
     expect($enumFile)->toContain('/** Pet is available for adoption */');
@@ -449,8 +449,64 @@ test('integer backed enum generates int backing type', function () {
     expect($file)->toContain('case V5 = 5;');
 });
 
-test('inline enum with x-enum uses specified name', function () {
-    $config = new Config(
+test('enum case names preserve underscores from values containing underscores', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [],
+        'components' => [
+            'schemas' => [
+                'VersionSetEnum' => [
+                    'type' => 'string',
+                    // Mix of uppercase-with-underscore (user's original example),
+                    // lowercase-with-underscore (the true edge case where old code
+                    // silently dropped the underscore), and a hyphen-separated value.
+                    'enum' => ['UNIVERSAL', 'UNI_MIMORADNE', 'uni_mimoradne', 'in_progress', 'extra-ordinary'],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/underscore_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(specPath: realpath($specFile), baseDir: $this->baseDir);
+    $result = (new Generator($config))->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    $file = file_get_contents($this->baseDir . '/api/enums/VersionSetEnum.php');
+
+    expect($file)->toContain('enum VersionSetEnum: string');
+
+    // Plain value with no underscores → simple uppercase
+    expect($file)->toContain("case UNIVERSAL = 'UNIVERSAL';");
+
+    // Uppercase value with underscore (user's original example): underscore must be kept
+    expect($file)->toContain("case UNI_MIMORADNE = 'UNI_MIMORADNE';");
+    // Old PascalCase code would have generated UniMimoradne (underscore dropped)
+    expect($file)->not->toContain('case UniMimoradne');
+
+    // Lowercase value with underscore: the critical edge case.
+    // Old code: split on '_', ucfirst each part, join → 'UniMimoradne' (underscore gone).
+    // New code: uppercase whole string, keep '_' → 'UNI_MIMORADNE'.
+    expect($file)->toContain("case UNI_MIMORADNE = 'uni_mimoradne';");
+    // Must NOT produce PascalCase (old behaviour)
+    expect($file)->not->toContain("case UniMimoradne = 'uni_mimoradne'");
+
+    // Another lowercase_underscore value
+    expect($file)->toContain("case IN_PROGRESS = 'in_progress';");
+    // Old code would have produced InProgress
+    expect($file)->not->toContain("case InProgress = 'in_progress'");
+
+    // Hyphen-separated value: hyphen becomes underscore, underscore is preserved
+    expect($file)->toContain("case EXTRA_ORDINARY = 'extra-ordinary';");
+    // Old code would have produced ExtraOrdinary
+    expect($file)->not->toContain("case ExtraOrdinary = 'extra-ordinary'");
+});
+
+test('inline enum with x-enum uses specified name', function () {    $config = new Config(
         specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
         baseDir: $this->baseDir,
     );
@@ -465,9 +521,9 @@ test('inline enum with x-enum uses specified name', function () {
     // File should be generated with the x-enum name
     $file = file_get_contents($this->baseDir . '/api/enums/SortField.php');
     expect($file)->toContain('enum SortField: string');
-    expect($file)->toContain("case Name = 'name';");
-    expect($file)->toContain("case Date = 'date';");
-    expect($file)->toContain("case Price = 'price';");
+    expect($file)->toContain("case NAME = 'name';");
+    expect($file)->toContain("case DATE = 'date';");
+    expect($file)->toContain("case PRICE = 'price';");
 });
 
 test('map type with additionalProperties generates correct schema', function () {

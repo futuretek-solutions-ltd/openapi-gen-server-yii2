@@ -84,18 +84,20 @@ final class EnumGenerator
 
     /**
      * Convert an enum value to a valid PHP case name.
-     * e.g., "in_progress" => "InProgress", "active" => "Active", "404" => "V404"
+     * e.g., "in_progress" => "IN_PROGRESS", "active" => "ACTIVE", "404" => "V404"
      */
     private function toCaseName(string|int $value): string
     {
         $value = (string)$value;
 
-        // Replace non-alphanumeric chars with underscores for splitting
-        $normalized = preg_replace('/[^a-zA-Z0-9]+/', '_', $value);
+        // Replace non-alphanumeric chars (excluding underscore) with underscores
+        $normalized = preg_replace('/[^a-zA-Z0-9_]+/', '_', $value);
 
-        // PascalCase
-        $parts = array_filter(explode('_', $normalized));
-        $caseName = implode('', array_map(ucfirst(...), $parts));
+        // Collapse multiple underscores and trim leading/trailing ones
+        $normalized = trim(preg_replace('/_+/', '_', $normalized), '_');
+
+        // UPPER_SNAKE_CASE – preserves underscores
+        $caseName = strtoupper($normalized);
 
         // If starts with digit, prefix with V
         if ($caseName !== '' && ctype_digit($caseName[0])) {
@@ -104,7 +106,7 @@ final class EnumGenerator
 
         // Fallback for empty
         if ($caseName === '') {
-            $caseName = 'Unknown';
+            $caseName = 'UNKNOWN';
         }
 
         return $caseName;
