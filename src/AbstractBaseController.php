@@ -30,7 +30,7 @@ use yii\web\Response;
  *
  * User controllers extend this class and implement the generated interface.
  */
-abstract class AbstractApiController extends Controller
+abstract class AbstractBaseController extends Controller
 {
     /**
      * Override to disable CSRF for API controllers.

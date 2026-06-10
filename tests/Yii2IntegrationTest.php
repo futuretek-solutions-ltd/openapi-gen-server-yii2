@@ -260,13 +260,13 @@ test('[yii2] generated classes are loadable', function () {
     // Note: CategoryController uses x-ns override in fixture, so it has a different namespace
 });
 
-test('[yii2] abstract controller extends AbstractApiController', function () {
+test('[yii2] abstract controller extends AbstractBaseController', function () {
     intGen(realpath(__DIR__ . '/fixtures/petstore.json'), $this->baseDir, $this->ns);
     $this->autoloader = intAutoload($this->baseDir);
     intLoad($this->baseDir, $this->nsPath);
     $ref = new ReflectionClass("{$this->ns}\\contracts\\AbstractPetController");
     expect($ref->isAbstract())->toBeTrue();
-    expect($ref->isSubclassOf(\futuretek\openapi\AbstractApiController::class))->toBeTrue();
+    expect($ref->isSubclassOf(\futuretek\openapi\AbstractBaseController::class))->toBeTrue();
 });
 
 // --- DataMapper round-trip ---
@@ -391,7 +391,7 @@ test('[yii2] urlManager path params with routePrefix', function () {
     expect($app->urlManager->createUrl(['v1/mixed/update-mixed', 'id' => '99']))->toBe('/mixed/99');
 });
 
-// --- AbstractApiController: operationMeta ---
+// --- AbstractBaseController: operationMeta ---
 
 test('[yii2] operationMeta has correct body class, mediaType and security', function () {
     intGen(realpath(__DIR__ . '/fixtures/petstore.json'), $this->baseDir, $this->ns);
@@ -410,14 +410,14 @@ test('[yii2] operationMeta has correct body class, mediaType and security', func
     expect($paramNames)->toContain('status');
 });
 
-// --- AbstractApiController: parameter casting ---
+// --- AbstractBaseController: parameter casting ---
 
 test('[yii2] castParameterValue handles scalar types', function () {
     $app = intApp();
-    $controller = new class('test', $app) extends \futuretek\openapi\AbstractApiController {
+    $controller = new class('test', $app) extends \futuretek\openapi\AbstractBaseController {
         protected array $operationMeta = [];
         public function testCast(mixed $value, string $type, ?string $enumClass = null): mixed {
-            $method = new ReflectionMethod(\futuretek\openapi\AbstractApiController::class, 'castParameterValue');
+            $method = new ReflectionMethod(\futuretek\openapi\AbstractBaseController::class, 'castParameterValue');
             $method->setAccessible(true);
             return $method->invoke($this, $value, $type, $enumClass);
         }
@@ -436,10 +436,10 @@ test('[yii2] castParameterValue resolves enum via tryFrom', function () {
     intLoad($this->baseDir, $this->nsPath, ['enums']);
     $app = intApp();
     $enumClass = "{$this->ns}\\enums\\PetStatus";
-    $controller = new class('test', $app) extends \futuretek\openapi\AbstractApiController {
+    $controller = new class('test', $app) extends \futuretek\openapi\AbstractBaseController {
         protected array $operationMeta = [];
         public function testCast(mixed $value, string $type, ?string $enumClass = null): mixed {
-            $method = new ReflectionMethod(\futuretek\openapi\AbstractApiController::class, 'castParameterValue');
+            $method = new ReflectionMethod(\futuretek\openapi\AbstractBaseController::class, 'castParameterValue');
             $method->setAccessible(true);
             return $method->invoke($this, $value, $type, $enumClass);
         }
@@ -450,7 +450,7 @@ test('[yii2] castParameterValue resolves enum via tryFrom', function () {
     expect($controller->testCast('nonexistent', 'string', $enumClass))->toBeNull();
 });
 
-// --- AbstractApiController: operationId resolution ---
+// --- AbstractBaseController: operationId resolution ---
 
 test('[yii2] resolveOperationId maps kebab-case to camelCase', function () {
     intGen(realpath(__DIR__ . '/fixtures/petstore.json'), $this->baseDir, $this->ns);
@@ -876,7 +876,7 @@ test('[yii2] concrete controller implementing interface is instantiable', functi
     );
     $app = intApp();
     $controller = new $ctrlClass('pet', $app);
-    expect($controller)->toBeInstanceOf(\futuretek\openapi\AbstractApiController::class);
+    expect($controller)->toBeInstanceOf(\futuretek\openapi\AbstractBaseController::class);
     $ref = new ReflectionClass($controller);
     expect($ref->implementsInterface("{$this->ns}\\contracts\\PetControllerInterface"))->toBeTrue();
 });

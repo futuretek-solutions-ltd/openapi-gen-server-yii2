@@ -83,7 +83,7 @@ final class AbstractControllerGenerator
         $lines[] = '';
 
         // Imports
-        $lines[] = 'use futuretek\\openapi\\AbstractApiController;';
+        $lines[] = 'use futuretek\\openapi\\AbstractBaseController;';
         $lines[] = '';
 
         $lines[] = "/**";
@@ -92,7 +92,7 @@ final class AbstractControllerGenerator
         $lines[] = " * This class is auto-generated. Do not edit manually.";
         $lines[] = " * Extend this class in your controller implementation and implement $interfaceName.";
         $lines[] = " */";
-        $lines[] = "abstract class $className extends AbstractApiController";
+        $lines[] = "abstract class $className extends AbstractBaseController";
         $lines[] = '{';
 
         // Generate operationMeta

@@ -148,8 +148,8 @@ test('generates abstract controller with operation metadata', function () {
 
     $abstractFile = file_get_contents($this->baseDir . '/api/contracts/AbstractPetController.php');
 
-    // Extends AbstractApiController
-    expect($abstractFile)->toContain('extends AbstractApiController');
+    // Extends AbstractBaseController
+    expect($abstractFile)->toContain('extends AbstractBaseController');
 
     // Has operationMeta with security
     expect($abstractFile)->toContain("'security' => ['bearerAuth']");
@@ -1374,7 +1374,7 @@ test('discriminator does not shadow class name variable in generator', function 
     expect(file_exists($this->baseDir . '/api/schemas/SmsNotification.php'))->toBeTrue();
 
     $file = file_get_contents($this->baseDir . '/api/contracts/AbstractNotificationController.php');
-    expect($file)->toContain('abstract class AbstractNotificationController extends AbstractApiController');
+    expect($file)->toContain('abstract class AbstractNotificationController extends AbstractBaseController');
 });
 
 test('controller interface uses base type for discriminated body', function () {
