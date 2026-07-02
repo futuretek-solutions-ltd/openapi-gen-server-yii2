@@ -391,6 +391,69 @@ test('[yii2] urlManager path params with routePrefix', function () {
     expect($app->urlManager->createUrl(['v1/mixed/update-mixed', 'id' => '99']))->toBe('/mixed/99');
 });
 
+test('[yii2] urlManager resolves a longer static route instead of being swallowed by a shorter string-param route', function () {
+    // Regression test for the reported bug: GET /podani/{id} (string) declared before
+    // GET /podani/get-meta-data/get-meta-data-system used to 404 in Yii2 because the
+    // old \S+ regex matched across `/`, letting the shorter route's rule consume the
+    // longer path. Confirms the fix by actually resolving an incoming request through
+    // urlManager, not just inspecting the generated route file.
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/podani/{id}' => [
+                'get' => [
+                    'operationId' => 'getPodani',
+                    'tags' => ['Podani'],
+                    'parameters' => [[
+                        'name' => 'id', 'in' => 'path', 'required' => true,
+                        'schema' => ['type' => 'string'],
+                    ]],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/podani/get-meta-data/get-meta-data-system' => [
+                'get' => [
+                    'operationId' => 'getMetaDataSystem',
+                    'tags' => ['Podani'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+    expect($result->hasWarnings())->toBeFalse();
+
+    $routes = require $this->baseDir . '/config/routes.api.php';
+
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+
+    try {
+        // Request for the longer, more specific route must not be swallowed by
+        // the shorter /podani/{id} rule. Each check uses a fresh Application/Request
+        // since yii\web\Request caches its resolved pathInfo internally.
+        $_SERVER['REQUEST_URI'] = '/podani/get-meta-data/get-meta-data-system';
+        $longApp = intApp($routes);
+        [$route, $params] = $longApp->urlManager->parseRequest($longApp->request);
+        expect($route)->toBe('podani/get-meta-data-system');
+        expect($params)->not->toHaveKey('id');
+
+        // Sanity check: the shorter route still resolves correctly for its own URL.
+        $_SERVER['REQUEST_URI'] = '/podani/abc-123';
+        $shortApp = intApp($routes);
+        [$shortRoute, $shortParams] = $shortApp->urlManager->parseRequest($shortApp->request);
+        expect($shortRoute)->toBe('podani/get-podani');
+        expect($shortParams)->toBe(['id' => 'abc-123']);
+    } finally {
+        unset($_SERVER['REQUEST_URI']);
+    }
+});
+
 // --- AbstractBaseController: operationMeta ---
 
 test('[yii2] operationMeta has correct body class, mediaType and security', function () {
@@ -828,8 +891,8 @@ test('[yii2] routePrefix produces correct module-style routes end-to-end', funct
     $routes = require $this->baseDir . '/config/routes.api.php';
     expect($routes['GET pets'])->toBe('api/pet/list-pets');
     expect($routes['POST pets'])->toBe('api/pet/create-pet');
-    expect($routes['GET pets/<petId:\S+>'])->toBe('api/pet/get-pet');
-    expect($routes['DELETE pets/<petId:\S+>'])->toBe('api/pet/delete-pet');
+    expect($routes['GET pets/<petId:[^/]+>'])->toBe('api/pet/get-pet');
+    expect($routes['DELETE pets/<petId:[^/]+>'])->toBe('api/pet/delete-pet');
     expect($routes['GET categories'])->toBe('api/category/list-categories');
     $app = intApp($routes);
     expect($app->urlManager->createUrl(['api/pet/list-pets']))->toBe('/pets');

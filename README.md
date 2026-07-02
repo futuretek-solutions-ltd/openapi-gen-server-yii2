@@ -11,8 +11,8 @@ A code generator that transforms an OpenAPI 3.0.x specification into a fully typ
 - **Schema DTOs** — Generates typed data classes with [`futuretek/data-mapper`](https://github.com/futuretek-solutions-ltd/data-mapper) attributes (`#[ArrayType]`, `#[MapType]`, `#[Format]`) and fluent setters for every property
 - **Backed Enums** — PHP 8.4 string/int backed enums from OpenAPI enums, with `x-enum-descriptions` support
 - **Controller Interfaces & Abstract Controllers** — Generated into a `contracts` namespace (not `controllers`) to avoid conflicts with the Yii2 default controller namespace where your implementations live
-- **Yii2 Route File** — Ready-to-use URL rules with type-based regex constraints (`\d+` for int/float, `\S+` for string)
-- **Ambiguous Route Detection** — Warns when a `\S+` parametric route would shadow a static route in Yii2's ordered URL matching
+- **Yii2 Route File** — Ready-to-use URL rules with type-based regex constraints (`\d+` for int/float, `[^/]+` for string, always scoped to a single path segment)
+- **Ambiguous Route Detection** — Warns when a parametric route would shadow a static route in Yii2's ordered URL matching, including cases where the routes have a different number of path segments
 - **File Upload Handling** — Single files and file arrays (`format: binary`) mapped to PSR-7 `UploadedFileInterface`, with a built-in `Psr7Stream` implementation for `getStream()`
 - **Binary/Plain Response Types** — `application/octet-stream` responses return `UploadedFileInterface`, `text/plain` returns `string` — no spurious DTO classes generated
 - **Array Request Bodies** — Typed array body parameters (`array` of DTOs) with `@param ItemClass[]` PHPDoc and `bodyIsArray` + `bodyItemClass` in `operationMeta`
@@ -279,20 +279,20 @@ When using Yii2 modules, route targets need a prefix matching the module ID. Use
 
 ### Route Regex Constraints
 
-Path parameters in generated URL rules include a type-based regex constraint so Yii2 can distinguish them from static segments:
+Path parameters in generated URL rules include a type-based regex constraint so Yii2 can distinguish them from static segments. Every constraint is scoped to a single path segment (it never matches `/`), so a parametric route can't accidentally swallow a deeper route's extra segments:
 
 | Parameter type | Regex | Example rule |
 |---|---|---|
 | `integer` / `number` | `\d+` | `GET items/<id:\d+>` |
-| `string` and all others | `\S+` | `GET items/<slug:\S+>` |
+| `string` and all others | `[^/]+` | `GET items/<slug:[^/]+>` |
 
 ### Ambiguous Route Detection
 
-The generator warns when a parametric route using `\S+` is listed **before** a static route at the same depth and HTTP method. In this situation Yii2 evaluates the parametric rule first and the static rule is never reached.
+The generator warns when a parametric route is listed **before** a static route it would shadow for the same HTTP method — either because they sit at the same depth and the parametric segment matches the static one, or because a shorter parametric route's trailing segment could otherwise consume a longer, more specific route's extra segments. In this situation Yii2 evaluates the parametric rule first and the static rule is never reached.
 
 ```
 ⚠ Ambiguous routes: GET /issues/{id} (listed first) will shadow GET /issues/create
-  — the \S+ path parameter matches the static segment.
+  — its path parameter also matches /issues/create.
   Move /issues/create before /issues/{id} in the spec, or constrain the parameter type to int/float.
 ```
 
@@ -339,7 +339,7 @@ The generator performs several spec quality checks during parsing and emits warn
 | Duplicate `operationId` | `Duplicate operationId 'X' at METHOD /path` |
 | `type: object` schema with no properties and no `allOf` | `Schema 'X' is declared as type:object but has no properties — likely a spec error` |
 | Inline enum missing `x-enum` name | `Inline enum on property 'X' has no x-enum name` |
-| `\S+` route shadowing a static route | `Ambiguous routes: METHOD /a will shadow METHOD /b` |
+| Parametric route shadowing a static route (same or differing depth) | `Ambiguous routes: METHOD /a will shadow METHOD /b` |
 
 Empty object schemas (no properties, no `allOf`) are **skipped** — no PHP file is generated. This catches the common mistake of using `type: object` for responses that should be a scalar type (`string`, `integer`, etc.).
 

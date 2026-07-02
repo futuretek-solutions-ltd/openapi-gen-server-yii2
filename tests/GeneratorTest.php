@@ -176,10 +176,10 @@ test('generates correct Yii2 routes', function () {
     expect($routes)->toBeArray();
     expect($routes['GET pets'])->toBe('pet/list-pets');
     expect($routes['POST pets'])->toBe('pet/create-pet');
-    expect($routes['GET pets/<petId:\S+>'])->toBe('pet/get-pet');
-    expect($routes['PUT pets/<petId:\S+>'])->toBe('pet/update-pet');
-    expect($routes['DELETE pets/<petId:\S+>'])->toBe('pet/delete-pet');
-    expect($routes['POST pets/<petId:\S+>/photo'])->toBe('pet/upload-pet-photo');
+    expect($routes['GET pets/<petId:[^/]+>'])->toBe('pet/get-pet');
+    expect($routes['PUT pets/<petId:[^/]+>'])->toBe('pet/update-pet');
+    expect($routes['DELETE pets/<petId:[^/]+>'])->toBe('pet/delete-pet');
+    expect($routes['POST pets/<petId:[^/]+>/photo'])->toBe('pet/upload-pet-photo');
     expect($routes['GET categories'])->toBe('category/list-categories');
 });
 
@@ -873,10 +873,10 @@ test('routes convert PascalCase controllers to kebab-case', function () {
     // camelCase operationId should become kebab-case action
     expect($routes['POST upload'])->toBe('upload/upload-multiple-files');
     expect($routes['PUT mixed/<id:\d+>'])->toBe('mixed/update-mixed');
-    expect($routes['PATCH items/<itemId:\S+>'])->toBe('item/patch-item');
+    expect($routes['PATCH items/<itemId:[^/]+>'])->toBe('item/patch-item');
 });
 
-test('path parameters get type-based regex: \d+ for int, \S+ for string', function () {
+test('path parameters get type-based regex: \d+ for int, [^/]+ for string', function () {
     $config = new Config(
         specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),
         baseDir: $this->baseDir,
@@ -889,13 +889,16 @@ test('path parameters get type-based regex: \d+ for int, \S+ for string', functi
     // integer path param must use \d+
     expect($routes)->toHaveKey('PUT mixed/<id:\d+>');
 
-    // string path params must use \S+
-    expect($routes)->toHaveKey('GET items/<itemId:\S+>');
-    expect($routes)->toHaveKey('PATCH items/<itemId:\S+>');
+    // string path params must use [^/]+ (single segment only — must never match `/`,
+    // otherwise a shorter route's trailing param could swallow a longer route's
+    // extra segments; see the ambiguity-detection tests below)
+    expect($routes)->toHaveKey('GET items/<itemId:[^/]+>');
+    expect($routes)->toHaveKey('PATCH items/<itemId:[^/]+>');
 
-    // params with no explicit type default to \S+
+    // params with no explicit type default to [^/]+
     expect(array_keys($routes))->each->not->toMatch('/\{[^}]+}/'); // no unconverted {params}
     expect(array_keys($routes))->each->not->toMatch('/<\w+>/');    // no bare <param> without regex
+    expect(array_keys($routes))->each->not->toContain('\S+');      // legacy unscoped regex must be gone
 });
 
 // ============================================================
@@ -1034,6 +1037,138 @@ test('non-ambiguous routes: different HTTP methods on same path do not warn', fu
                 'post' => [
                     'operationId' => 'itemStats',
                     'tags' => ['Item'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    $routeWarnings = array_filter($result->getWarnings(), fn($w) => str_contains($w, 'shadow'));
+    expect($routeWarnings)->toBeEmpty();
+});
+
+// ============================================================
+// Regression tests: differing-depth routes (reported bug)
+//
+// A shorter route ending in a string path param used to be compared only
+// against routes of the *same* segment depth, so the ambiguity checker never
+// even looked at a deeper, more specific route sharing the same prefix. With
+// the old `\S+` regex, that meant a route like `GET /podani/{id}` could
+// silently swallow requests meant for `GET /podani/get-meta-data/get-meta-data-system`
+// with no warning at generation time. The fix is two-fold: string params now
+// generate `[^/]+` (scoped to a single path segment, so they can never match
+// past a `/`), and the ambiguity checker no longer skips differing-depth pairs.
+// ============================================================
+
+test('differing-depth routes: string param before longer static route no longer shadows it', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/podani/{id}' => [
+                'get' => [
+                    'operationId' => 'getPodani',
+                    'tags' => ['Podani'],
+                    'parameters' => [[
+                        'name' => 'id', 'in' => 'path', 'required' => true,
+                        'schema' => ['type' => 'string'],
+                    ]],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/podani/get-meta-data/get-meta-data-system' => [
+                'get' => [
+                    'operationId' => 'getMetaDataSystem',
+                    'tags' => ['Podani'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    // No shadowing warning: [^/]+ cannot cross into the extra segments.
+    $routeWarnings = array_filter($result->getWarnings(), fn($w) => str_contains($w, 'shadow'));
+    expect($routeWarnings)->toBeEmpty();
+
+    // The generated pattern must be scoped to a single segment.
+    $routes = require $this->baseDir . '/config/routes.api.php';
+    expect($routes)->toHaveKey('GET podani/<id:[^/]+>');
+    expect($routes)->not->toHaveKey('GET podani/<id:\S+>');
+
+    // Directly confirm the regex can't match the longer route's remaining path —
+    // this is exactly what let the shorter route swallow the longer one before the fix.
+    expect(preg_match('#^[^/]+$#', 'get-meta-data/get-meta-data-system'))->toBe(0);
+    expect(preg_match('#^[^/]+$#', 'get-meta-data'))->toBe(1);
+});
+
+test('differing-depth routes: int param before longer static route does not warn', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/podani/{id}' => [
+                'get' => [
+                    'operationId' => 'getPodani',
+                    'tags' => ['Podani'],
+                    'parameters' => [[
+                        'name' => 'id', 'in' => 'path', 'required' => true,
+                        'schema' => ['type' => 'integer'],
+                    ]],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/podani/get-meta-data/get-meta-data-system' => [
+                'get' => [
+                    'operationId' => 'getMetaDataSystem',
+                    'tags' => ['Podani'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(specPath: realpath($specFile), baseDir: $this->baseDir)))->generate();
+
+    $routeWarnings = array_filter($result->getWarnings(), fn($w) => str_contains($w, 'shadow'));
+    expect($routeWarnings)->toBeEmpty();
+});
+
+test('differing-depth routes: longer static route declared first does not warn', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/podani/get-meta-data/get-meta-data-system' => [
+                'get' => [
+                    'operationId' => 'getMetaDataSystem',
+                    'tags' => ['Podani'],
+                    'responses' => ['200' => ['description' => 'ok']],
+                ],
+            ],
+            '/podani/{id}' => [
+                'get' => [
+                    'operationId' => 'getPodani',
+                    'tags' => ['Podani'],
+                    'parameters' => [[
+                        'name' => 'id', 'in' => 'path', 'required' => true,
+                        'schema' => ['type' => 'string'],
+                    ]],
                     'responses' => ['200' => ['description' => 'ok']],
                 ],
             ],
@@ -1253,8 +1388,8 @@ test('multiple HTTP methods on same path generate separate route entries', funct
     expect($routes)->toHaveKey('POST items');
 
     // /items/{itemId} should have both GET and PATCH
-    expect($routes)->toHaveKey('GET items/<itemId:\S+>');
-    expect($routes)->toHaveKey('PATCH items/<itemId:\S+>');
+    expect($routes)->toHaveKey('GET items/<itemId:[^/]+>');
+    expect($routes)->toHaveKey('PATCH items/<itemId:[^/]+>');
 });
 
 test('header parameter stored in operationMeta with in=header', function () {
@@ -1486,10 +1621,10 @@ test('routes include routePrefix when configured', function () {
     expect($routes)->toBeArray();
     expect($routes['GET pets'])->toBe('api/pet/list-pets');
     expect($routes['POST pets'])->toBe('api/pet/create-pet');
-    expect($routes['GET pets/<petId:\S+>'])->toBe('api/pet/get-pet');
-    expect($routes['PUT pets/<petId:\S+>'])->toBe('api/pet/update-pet');
-    expect($routes['DELETE pets/<petId:\S+>'])->toBe('api/pet/delete-pet');
-    expect($routes['POST pets/<petId:\S+>/photo'])->toBe('api/pet/upload-pet-photo');
+    expect($routes['GET pets/<petId:[^/]+>'])->toBe('api/pet/get-pet');
+    expect($routes['PUT pets/<petId:[^/]+>'])->toBe('api/pet/update-pet');
+    expect($routes['DELETE pets/<petId:[^/]+>'])->toBe('api/pet/delete-pet');
+    expect($routes['POST pets/<petId:[^/]+>/photo'])->toBe('api/pet/upload-pet-photo');
     expect($routes['GET categories'])->toBe('api/category/list-categories');
 });
 
