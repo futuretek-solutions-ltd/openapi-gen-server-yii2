@@ -361,6 +361,7 @@ final class OpenApiParser
         $mapValueType = null;
         $enumRef = null;
         $isFile = false;
+        $arrayItemIsEnum = false;
 
         // Check if this property is a resolved $ref to a known component enum
         $componentEnumName = $this->getComponentEnumName($schema);
@@ -426,12 +427,14 @@ final class OpenApiParser
                 $itemEnumName = $this->getComponentEnumName($items);
                 if ($itemEnumName !== null) {
                     $arrayItemType = $itemEnumName;
+                    $arrayItemIsEnum = true;
                 } else {
                     $itemSchemaName = $this->getComponentSchemaName($items);
                     if ($itemSchemaName !== null) {
                         $arrayItemType = $itemSchemaName;
                     } elseif (!empty($items->enum)) {
                         $arrayItemType = $this->resolveInlineEnumName($name . 'Item', $items);
+                        $arrayItemIsEnum = true;
                     } elseif ($items->type === 'object' || !empty($items->properties)) {
                         // Inline object in array — generate schema
                         $inlineName = ucfirst($name) . 'Item';
@@ -450,6 +453,12 @@ final class OpenApiParser
                     }
                 }
             } elseif ($items instanceof Reference) {
+                // Known gap: unlike the Schema branch above, there's no pointer-based lookup here
+                // to tell an enum component ref apart from a plain schema component ref, so
+                // $arrayItemIsEnum is never set true in this branch - if $items ever arrives as an
+                // unresolved Reference (rather than an already-dereferenced Schema, which is what
+                // every case observed so far produces) pointing at an enum, the generated import
+                // will be wrong the same way this whole fix addresses for the Schema branch.
                 $arrayItemType = $this->extractRefName($items->getJsonReference()->getJsonPointer()->getPointer());
             }
         }
@@ -503,6 +512,7 @@ final class OpenApiParser
             enumRef: $enumRef,
             default: $default,
             isFile: $isFile,
+            arrayItemIsEnum: $arrayItemIsEnum,
         );
     }
 

@@ -20,9 +20,16 @@ final class ParsedProperty
      * @param string|null $arrayItemType For array properties, the item type class name or scalar
      * @param string|null $arrayItemFormat OpenAPI format of array items (date, date-time, etc.)
      * @param string|null $mapValueType For map (additionalProperties) properties, the value type
-     * @param string|null $enumRef Reference to an enum class name
+     * @param string|null $enumRef Reference to an enum class name (only set for a *singular*
+     *     enum-typed property - never set when arrayItemType is also set, see $arrayItemIsEnum)
      * @param mixed $default Default value
      * @param bool $isFile Whether this property represents a file upload
+     * @param bool $arrayItemIsEnum Whether arrayItemType itself refers to an enum class (component
+     *     ref or inline) rather than a plain nested schema object - the two cases produce the same
+     *     shape of $arrayItemType (a class-like name), but only the enum case needs its import
+     *     resolved against the enum namespace instead of the schema namespace. $enumRef cannot
+     *     carry this signal because it's already overloaded elsewhere as "this property's own PHP
+     *     type is an enum", which is never true for an array-typed property.
      */
     public function __construct(
         public readonly string $name,
@@ -38,6 +45,7 @@ final class ParsedProperty
         public readonly ?string $enumRef = null,
         public readonly mixed $default = null,
         public readonly bool $isFile = false,
+        public readonly bool $arrayItemIsEnum = false,
     ) {}
 }
 

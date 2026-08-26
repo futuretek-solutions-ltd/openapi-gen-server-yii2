@@ -560,6 +560,139 @@ test('self-referencing array property generates correct ArrayType', function () 
     expect($file)->toContain('public ?array $relatedItems = null;');
 });
 
+// ============================================================
+// Regression: array-of-enum property must import the enum from the enum namespace
+//
+// Bug: collectImports() decided whether to import an ArrayType array item class by checking
+// $property->enumRef, but that field is only ever populated for a *singular* enum-typed property -
+// for an array-of-enum property it's always null (by the parser's own convention), so the import
+// was silently never emitted. The generated #[ArrayType(SomeEnum::class)] attribute then resolved
+// SomeEnum::class against the *current* namespace (schemas) instead of the enum namespace, pointing
+// at a class that doesn't exist. Neither PHP nor the generator's own validation catches this -
+// ::class inside an attribute argument is just a string, never resolved at parse time - so it only
+// surfaces later, as DataMapper's enum_exists()/class_exists() checks against the wrong FQCN
+// silently failing and leaving every array item as a raw unconverted string. Fixed by giving
+// ParsedProperty an explicit $arrayItemIsEnum flag, set whenever arrayItemType resolves to a
+// component-ref enum or an inline enum, and checking that instead of the overloaded $enumRef.
+// ============================================================
+
+test('array property referencing a component enum imports it from the enum namespace', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/test' => [
+                'get' => [
+                    'operationId' => 'testOp',
+                    'tags' => ['Test'],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+        'components' => [
+            'schemas' => [
+                'LayerEnum' => [
+                    'type' => 'string',
+                    'enum' => ['frontend', 'backend'],
+                ],
+                'Capability' => [
+                    'type' => 'object',
+                    'required' => ['level'],
+                    'properties' => [
+                        'level' => ['type' => 'string'],
+                        'layers' => [
+                            'type' => 'array',
+                            'items' => ['$ref' => '#/components/schemas/LayerEnum'],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+        namespace: 'app\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    $file = file_get_contents($this->baseDir . '/api/schemas/Capability.php');
+
+    // The exact bug: without the fix, this import is missing and LayerEnum::class in the
+    // attribute below silently resolves to app\api\schemas\LayerEnum (nonexistent) instead.
+    expect($file)->toContain('use app\\api\\enums\\LayerEnum;');
+    expect($file)->toContain('#[ArrayType(LayerEnum::class)]');
+    expect($file)->toContain('public ?array $layers = null;');
+});
+
+test('array property with an inline enum imports it from the enum namespace', function () {
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/test' => [
+                'get' => [
+                    'operationId' => 'testOp',
+                    'tags' => ['Test'],
+                    'responses' => [
+                        '200' => ['description' => 'OK'],
+                    ],
+                ],
+            ],
+        ],
+        'components' => [
+            'schemas' => [
+                'Capability' => [
+                    'type' => 'object',
+                    'required' => ['level'],
+                    'properties' => [
+                        'level' => ['type' => 'string'],
+                        'layers' => [
+                            'type' => 'array',
+                            'items' => [
+                                'type' => 'string',
+                                'enum' => ['frontend', 'backend'],
+                                'x-enum' => 'InlineLayerEnum',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $specFile = $this->baseDir . '/test_spec.json';
+    mkdir($this->baseDir, 0755, true);
+    file_put_contents($specFile, json_encode($spec));
+
+    $config = new Config(
+        specPath: realpath($specFile),
+        baseDir: $this->baseDir,
+        namespace: 'app\\api',
+    );
+
+    $generator = new Generator($config);
+    $result = $generator->generate();
+
+    expect($result->hasErrors())->toBeFalse();
+
+    $file = file_get_contents($this->baseDir . '/api/schemas/Capability.php');
+
+    expect($file)->toContain('use app\\api\\enums\\InlineLayerEnum;');
+    expect($file)->toContain('#[ArrayType(InlineLayerEnum::class)]');
+});
+
 test('scalar array types get @var phpdoc without ArrayType attribute', function () {
     $config = new Config(
         specPath: realpath(__DIR__ . '/fixtures/edge_cases.json'),

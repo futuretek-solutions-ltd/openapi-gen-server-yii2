@@ -140,11 +140,16 @@ final class SchemaGenerator
             if ($property->arrayItemType !== null && ($this->isClassName($property->arrayItemType) || $property->isFile)) {
                 $hasArrayType = true;
 
-                // Import array item class if it's a schema reference
-                if ($this->isClassName($property->arrayItemType)) {
-                    if ($property->enumRef !== null) {
-                        $imports[$property->arrayItemType] = $enumNamespace . '\\' . $property->arrayItemType;
-                    }
+                // Import array item class if it's a schema reference. Must check
+                // $property->arrayItemIsEnum here, NOT $property->enumRef - enumRef is only ever
+                // set for a *singular* enum-typed property (see its docblock), so for an
+                // array-of-enum property it's always null and this import would silently never be
+                // added, leaving the generated #[ArrayType(SomeEnum::class)] attribute pointing at
+                // an unimported class name that resolves (wrongly) to the current namespace instead
+                // of $enumNamespace - DataMapper's enum_exists()/class_exists() checks against that
+                // wrong FQCN then fail, and array items are left as unconverted raw strings.
+                if ($this->isClassName($property->arrayItemType) && $property->arrayItemIsEnum) {
+                    $imports[$property->arrayItemType] = $enumNamespace . '\\' . $property->arrayItemType;
                 }
             }
 
