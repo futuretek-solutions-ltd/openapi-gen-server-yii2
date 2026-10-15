@@ -151,6 +151,7 @@ The first namespace segment (`app`) maps to `--base-dir`. Remaining segments bec
 - **JSON** — Parsed from raw body, mapped to DTO via DataMapper
 - **Multipart** — Form fields + file uploads, with `UploadedFileInterface` (PSR-7) for files
 - **Discriminator** — Reads the discriminator property, resolves the concrete subclass, then deserializes
+- **Map** — A JSON object with arbitrary keys (`type: object` + `additionalProperties`) is passed as an associative array, see [Map request body](#map-request-body)
 
 ### Response Handling
 
@@ -237,6 +238,39 @@ public function actionBatchCreate(array $body): BatchResult;
 // operationMeta includes bodyIsArray and bodyItemClass
 // so AbstractApiController deserializes each array element into the correct DTO
 ```
+
+### Map request body
+
+A request body that is an object with arbitrary keys (`type: object` with `additionalProperties` and no fixed `properties`) is generated as an `array` parameter keyed by the property names:
+
+```yaml
+/ts/reorder-cases:
+  post:
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            description: Map of case ID to position
+            additionalProperties:
+              type: string
+```
+
+```php
+// Generated interface
+/** @param array<string, string> $body Request body (map) */
+public function actionReorderCases(array $body): void;
+
+// operationMeta: 'bodyType' => 'string', 'bodyIsMap' => true
+```
+
+The value type can be a scalar (`string`, `integer`, `number`, `boolean`: values are cast), `true` / no type (any value, `mixed`), or an object schema (a `$ref` or an inline object): every value is then deserialized into that DTO (`bodyClass`). Notes:
+
+- An empty request body and `{}` give an empty array; a JSON list (`[...]`) and a structured value for a scalar type are rejected.
+- PHP turns numeric string keys into integer keys (`{"12": "1"}` arrives as `[12 => '1']`).
+- An object with fixed `properties` (with or without `additionalProperties`) is still a regular DTO body.
+- Before this was supported, such a body was generated as a scalar `mixed` and every request with a JSON object failed with `Invalid request body: expected scalar value`.
 
 ### Schema Setters
 

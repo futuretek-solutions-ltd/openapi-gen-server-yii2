@@ -2467,3 +2467,183 @@ test('[yii2] action returning UploadedFileInterface without filename omits Conte
     expect($app->response->headers->get('Content-Disposition'))->toBeNull();
     expect($app->response->content)->toBe('raw binary');
 });
+
+// --- Map request body (type: object + additionalProperties) at runtime ---
+
+/**
+ * Generates and loads a `Testing` controller with one operation `reorderCases` whose request body is the given
+ * schema, instantiates a controller capturing the action argument in `$got` and returns [controller class, app].
+ *
+ * @param string $signature PHP signature of the action parameters (the body is passed as `$body`)
+ * @return array{0: string, 1: Application}
+ */
+function intMapBodyController(object $test, array $bodySchema, bool $required = true, array $components = [], string $signature = 'array $body', array $pathParams = []): array
+{
+    $operation = [
+        'operationId' => 'reorderCases',
+        'tags' => ['Testing'],
+        'requestBody' => [
+            'required' => $required,
+            'content' => ['application/json' => ['schema' => $bodySchema]],
+        ],
+        'responses' => ['200' => ['description' => 'OK']],
+    ];
+    if ($pathParams !== []) {
+        $operation['parameters'] = array_map(
+            static fn(string $name) => ['in' => 'path', 'name' => $name, 'required' => true, 'schema' => ['type' => 'integer']],
+            $pathParams,
+        );
+    }
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [($pathParams !== [] ? '/ts/reorder-cases/{' . $pathParams[0] . '}' : '/ts/reorder-cases') => ['post' => $operation]],
+    ];
+    if ($components !== []) {
+        $spec['components'] = ['schemas' => $components];
+    }
+
+    mkdir($test->baseDir, 0755, true);
+    file_put_contents($test->baseDir . '/spec.json', json_encode($spec));
+    intGen(realpath($test->baseDir . '/spec.json'), $test->baseDir, $test->ns);
+    $test->autoloader = intAutoload($test->baseDir);
+    intLoad($test->baseDir, $test->nsPath);
+
+    $ns = $test->ns;
+    $ctrlClass = 'MapBodyCtrl_' . str_replace('.', '_', uniqid('', true));
+    eval(
+        'class ' . $ctrlClass
+        . ' extends \\' . $ns . '\\contracts\\AbstractTestingController'
+        . ' implements \\' . $ns . '\\contracts\\TestingControllerInterface {'
+        . ' public static mixed $got = null;'
+        . ' public static array $args = [];'
+        . ' public function actionReorderCases(' . $signature . '): void { self::$args = func_get_args(); self::$got = $body ?? null; }'
+        . '}'
+    );
+
+    return [$ctrlClass, intApp()];
+}
+
+/** Sends the JSON (or empty body when null) to the map action and returns what the action received. */
+function intRunMapBody(string $ctrlClass, Application $app, ?string $json, array $actionParams = []): mixed
+{
+    $ctrlClass::$got = '__not_called__';
+    intRequest($app, 'POST', $json);
+    (new $ctrlClass('testing', $app))->runAction('reorder-cases', $actionParams);
+
+    return $ctrlClass::$got;
+}
+
+test('[yii2] map body of strings reaches the action as an associative array', function () {
+    [$ctrl, $app] = intMapBodyController($this, ['type' => 'object', 'additionalProperties' => ['type' => 'string']]);
+
+    // the portal sends {caseId: position}; PHP turns numeric string keys into int keys
+    expect(intRunMapBody($ctrl, $app, '{"1222":"1","1223":"2"}'))->toBe([1222 => '1', 1223 => '2']);
+});
+
+test('[yii2] map body keeps non-numeric keys as strings and preserves their order', function () {
+    [$ctrl, $app] = intMapBodyController($this, ['type' => 'object', 'additionalProperties' => ['type' => 'string']]);
+
+    expect(intRunMapBody($ctrl, $app, '{"b":"x","a":"y"}'))->toBe(['b' => 'x', 'a' => 'y']);
+});
+
+test('[yii2] map body casts values to the declared scalar type', function (string $type, string $json, array $expected) {
+    [$ctrl, $app] = intMapBodyController($this, ['type' => 'object', 'additionalProperties' => ['type' => $type]]);
+
+    expect(intRunMapBody($ctrl, $app, $json))->toBe($expected);
+})->with([
+    'integer from strings and numbers' => ['integer', '{"a":"3","b":4}', ['a' => 3, 'b' => 4]],
+    'number' => ['number', '{"a":"1.5","b":2}', ['a' => 1.5, 'b' => 2.0]],
+    'boolean' => ['boolean', '{"a":true,"b":"false","c":"1"}', ['a' => true, 'b' => false, 'c' => true]],
+    'string from number' => ['string', '{"a":5}', ['a' => '5']],
+]);
+
+test('[yii2] map body of any values passes nested structures through untouched', function () {
+    [$ctrl, $app] = intMapBodyController($this, ['type' => 'object', 'additionalProperties' => true]);
+
+    expect(intRunMapBody($ctrl, $app, '{"a":{"x":[1,2]},"b":null,"c":"s"}'))->toBe(['a' => ['x' => [1, 2]], 'b' => null, 'c' => 's']);
+});
+
+test('[yii2] empty object and empty request body give an empty map', function (?string $json) {
+    [$ctrl, $app] = intMapBodyController($this, ['type' => 'object', 'additionalProperties' => ['type' => 'string']]);
+
+    expect(intRunMapBody($ctrl, $app, $json))->toBe([]);
+})->with([
+    'empty object' => ['{}'],
+    'no body' => [null],
+]);
+
+test('[yii2] map body rejects a JSON list, a scalar and invalid JSON', function (string $json, string $exception, string $message) {
+    [$ctrl, $app] = intMapBodyController($this, ['type' => 'object', 'additionalProperties' => ['type' => 'string']]);
+
+    expect(fn() => intRunMapBody($ctrl, $app, $json))->toThrow($exception, $message);
+    expect($ctrl::$got)->toBe('__not_called__');
+})->with([
+    'list' => ['["a","b"]', RuntimeException::class, 'expected object'],
+    'scalar' => ['5', RuntimeException::class, 'expected object'],
+    'invalid json' => ['{"a":', JsonException::class, ''],
+]);
+
+test('[yii2] map body of scalars rejects a structured value and names its key', function () {
+    [$ctrl, $app] = intMapBodyController($this, ['type' => 'object', 'additionalProperties' => ['type' => 'string']]);
+
+    expect(fn() => intRunMapBody($ctrl, $app, '{"ok":"1","bad":[1]}'))
+        ->toThrow(RuntimeException::class, "value of key 'bad' must be string");
+});
+
+test('[yii2] map body of DTOs maps every value to its DTO and keeps the keys', function () {
+    [$ctrl, $app] = intMapBodyController(
+        $this,
+        ['type' => 'object', 'additionalProperties' => ['$ref' => '#/components/schemas/Position']],
+        true,
+        ['Position' => [
+            'type' => 'object',
+            'required' => ['order'],
+            'properties' => ['order' => ['type' => 'integer'], 'note' => ['type' => 'string']],
+        ]],
+    );
+    $dto = $this->ns . '\\schemas\\Position';
+
+    $got = intRunMapBody($ctrl, $app, '{"7":{"order":1,"note":"first"},"9":{"order":2}}');
+
+    expect($got)->toHaveCount(2);
+    expect(array_keys($got))->toBe([7, 9]);
+    expect($got[7])->toBeInstanceOf($dto);
+    expect($got[7]->order)->toBe(1);
+    expect($got[7]->note)->toBe('first');
+    expect($got[9])->toBeInstanceOf($dto);
+    expect($got[9]->order)->toBe(2);
+});
+
+test('[yii2] map body of DTOs rejects a value that is not an object', function () {
+    [$ctrl, $app] = intMapBodyController(
+        $this,
+        ['type' => 'object', 'additionalProperties' => ['$ref' => '#/components/schemas/Position']],
+        true,
+        ['Position' => ['type' => 'object', 'properties' => ['order' => ['type' => 'integer']]]],
+    );
+
+    expect(fn() => intRunMapBody($ctrl, $app, '{"7":5}'))->toThrow(RuntimeException::class, "value of key '7' must be an object");
+});
+
+test('[yii2] optional map body is placed by the action signature next to a path parameter', function () {
+    [$ctrl, $app] = intMapBodyController(
+        $this,
+        ['type' => 'object', 'additionalProperties' => ['type' => 'integer']],
+        false,
+        [],
+        'int $id, ?array $body = null',
+        ['id'],
+    );
+
+    expect(intRunMapBody($ctrl, $app, '{"a":"2"}', ['id' => '41']))->toBe(['a' => 2]);
+    expect($ctrl::$args)->toBe([41, ['a' => 2]]);
+});
+
+test('[yii2] map body does not break the array body of the same generated code', function () {
+    // same request-body machinery: a JSON list for an array body keeps working and a JSON object is still rejected
+    [$ctrl, $app] = intMapBodyController($this, ['type' => 'array', 'items' => ['type' => 'integer']]);
+
+    expect(intRunMapBody($ctrl, $app, '[1,"2"]'))->toBe([1, 2]);
+    expect(fn() => intRunMapBody($ctrl, $app, '{"a":1}'))->toThrow(RuntimeException::class, 'expected array');
+});

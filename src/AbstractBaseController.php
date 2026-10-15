@@ -240,6 +240,8 @@ abstract class AbstractBaseController extends Controller
             $discriminator = $meta['discriminator'] ?? null;
             if (!empty($meta['bodyIsArray'])) {
                 $body = $this->deserializeArrayBody($meta['bodyClass'], $meta['mediaType'] ?? 'application/json');
+            } elseif (!empty($meta['bodyIsMap'])) {
+                $body = $this->deserializeMapBody($meta['bodyClass'], $meta['mediaType'] ?? 'application/json');
             } else {
                 $body = $this->deserializeBody($meta['bodyClass'], $meta['mediaType'] ?? 'application/json', $discriminator);
             }
@@ -247,6 +249,8 @@ abstract class AbstractBaseController extends Controller
         } elseif (isset($meta['bodyType'])) {
             if (!empty($meta['bodyIsArray'])) {
                 $body = $this->deserializePrimitiveArrayBody($meta['bodyType'], $meta['mediaType'] ?? 'application/json');
+            } elseif (!empty($meta['bodyIsMap'])) {
+                $body = $this->deserializePrimitiveMapBody($meta['bodyType'], $meta['mediaType'] ?? 'application/json');
             } else {
                 $body = $this->deserializePrimitiveBody(
                     $meta['bodyType'],
@@ -571,6 +575,87 @@ abstract class AbstractBaseController extends Controller
         ]);
 
         return array_map(fn($item) => DataMapper::toObject($item, $dtoClass), $data);
+    }
+
+    /**
+     * Read the raw body of a map request (a JSON object with arbitrary keys) as an associative array.
+     *
+     * An empty body and `{}` both give an empty map. A JSON list (`[...]`) is not a map and is rejected.
+     * Note that PHP turns numeric string keys into integer keys ("12" => 12).
+     *
+     * @return array<string|int, mixed>
+     */
+    private function readMapBody(string $what): array
+    {
+        $rawBody = \Yii::$app->request->getRawBody();
+
+        if ($rawBody === '' || $rawBody === false) {
+            $this->logger->info("Empty map body ({$what})");
+            return [];
+        }
+
+        $data = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
+
+        if (!is_array($data) || (!empty($data) && array_is_list($data))) {
+            throw new \RuntimeException('Invalid JSON body: expected object');
+        }
+
+        return $data;
+    }
+
+    /**
+     * Deserialize a request body that is a JSON object whose values are primitives
+     * (e.g., `{"12": "1", "15": "2"}` for `additionalProperties: {type: string}`).
+     *
+     * @param string $valueType The PHP scalar type of each value (int, float, string, bool, mixed, array, object)
+     * @return array<string|int, mixed>
+     */
+    private function deserializePrimitiveMapBody(string $valueType, string $mediaType): array
+    {
+        $data = $this->readMapBody("map<string, {$valueType}>");
+
+        $isScalarType = in_array($valueType, ['int', 'float', 'string', 'bool'], true);
+        $result = [];
+        foreach ($data as $key => $value) {
+            if ($isScalarType && (is_array($value) || is_object($value))) {
+                throw new \RuntimeException("Invalid JSON body: value of key '{$key}' must be {$valueType}");
+            }
+            $result[$key] = $this->castParameterValue($value, $valueType, null);
+        }
+
+        $this->logger->info("Body deserialized → map<string, {$valueType}>", [
+            'mediaType' => $mediaType,
+            'count' => count($result),
+            'data' => $this->summarizeData($result),
+        ]);
+
+        return $result;
+    }
+
+    /**
+     * Deserialize a request body that is a JSON object whose values are DTO objects.
+     *
+     * @param class-string $dtoClass The DTO class for each value
+     * @return array<string|int, object>
+     */
+    private function deserializeMapBody(string $dtoClass, string $mediaType): array
+    {
+        $data = $this->readMapBody("map<string, {$dtoClass}>");
+
+        $result = [];
+        foreach ($data as $key => $value) {
+            if (!is_array($value)) {
+                throw new \RuntimeException("Invalid JSON body: value of key '{$key}' must be an object");
+            }
+            $result[$key] = DataMapper::toObject($value, $dtoClass);
+        }
+
+        $this->logger->info("Body deserialized → map<string, {$dtoClass}>", [
+            'mediaType' => $mediaType,
+            'count' => count($result),
+        ]);
+
+        return $result;
     }
 
     /**

@@ -658,6 +658,7 @@ final class OpenApiParser
         $requestBodyMediaType = null;
         $requestBodyRequired = false;
         $requestBodyIsArray = false;
+        $requestBodyIsMap = false;
 
         if ($operation->requestBody !== null && !($operation->requestBody instanceof Reference)) {
             $requestBody = $operation->requestBody;
@@ -691,6 +692,10 @@ final class OpenApiParser
                         } elseif ($items instanceof Reference) {
                             $requestBodyClass = $this->extractRefName($items->getJsonReference()->getJsonPointer()->getPointer());
                         }
+                    } elseif ($this->isInlineMapSchema($schema)) {
+                        // Map body ({"<key>": <value>, ...}): the class is the VALUE type, keys are arbitrary strings
+                        $requestBodyIsMap = true;
+                        $requestBodyClass = $this->resolveMapValueType($schema->additionalProperties, ucfirst($operationId) . 'RequestValue');
                     } else {
                         $requestBodyClass = $this->resolveSchemaReference($mediaTypeObj->schema, ucfirst($operationId) . 'Request');
                     }
@@ -794,6 +799,7 @@ final class OpenApiParser
             requestBodyMediaType: $requestBodyMediaType,
             requestBodyRequired: $requestBodyRequired,
             requestBodyIsArray: $requestBodyIsArray,
+            requestBodyIsMap: $requestBodyIsMap,
             parameters: $parameters,
             responses: $responses,
             successResponseClass: $successResponseClass,
@@ -807,6 +813,36 @@ final class OpenApiParser
     /**
      * Resolve a schema to a class name — either a known component reference or an inline schema.
      */
+    /**
+     * Whether the schema is an inline map: `type: object` with `additionalProperties` and no fixed
+     * properties. A map declared as a named component keeps being handled as a regular DTO.
+     */
+    private function isInlineMapSchema(Schema|Reference $schema): bool
+    {
+        return $schema instanceof Schema
+            && $schema->type === 'object'
+            && empty($schema->properties)
+            && $schema->allOf === null
+            && $schema->oneOf === null
+            && $schema->anyOf === null
+            && $schema->additionalProperties !== null
+            && $schema->additionalProperties !== false
+            && $this->getComponentSchemaName($schema) === null;
+    }
+
+    /**
+     * Value type of a map body: scalar type name, component DTO name, or a DTO generated from an inline
+     * object schema. `additionalProperties: true` (any value) is `mixed`.
+     */
+    private function resolveMapValueType(Schema|Reference|bool $additionalProperties, string $inlineFallbackName): string
+    {
+        if ($additionalProperties instanceof Reference || $additionalProperties instanceof Schema) {
+            return $this->resolveSchemaReference($additionalProperties, $inlineFallbackName);
+        }
+
+        return 'mixed';
+    }
+
     private function resolveSchemaReference(Schema|Reference $schema, string $inlineFallbackName): string
     {
         if ($schema instanceof Reference) {

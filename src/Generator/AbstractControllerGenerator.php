@@ -114,6 +114,16 @@ final class AbstractControllerGenerator
                         $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
                     }
                     $lines[] = "            'bodyIsArray' => true,";
+                } elseif ($op->requestBodyIsMap) {
+                    if (in_array($op->requestBodyClass, self::BUILTIN_TYPES, true)) {
+                        // Map of scalar values: no DTO class needed
+                        $lines[] = "            'bodyType' => '{$op->requestBodyClass}',";
+                    } else {
+                        // Map of DTOs: reference the value class
+                        $fqcn = $schemaNamespace . '\\' . $op->requestBodyClass;
+                        $lines[] = "            'bodyClass' => \\{$fqcn}::class,";
+                    }
+                    $lines[] = "            'bodyIsMap' => true,";
                 } else {
                     if (in_array($op->requestBodyClass, self::BUILTIN_TYPES, true)) {
                         $lines[] = "            'bodyType' => '{$op->requestBodyClass}',";

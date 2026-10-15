@@ -2781,3 +2781,181 @@ test('no duplicate setter warning when all property names map to distinct camelC
     expect($result->hasWarnings())->toBeFalse();
 });
 
+
+// --- Map request body (type: object + additionalProperties) ---
+
+/**
+ * Generates code for a single POST operation `reorderCases` (tag Testing) with the given request body schema
+ * and returns the generated abstract controller and interface sources.
+ *
+ * @return array{result: \futuretek\openapi\GeneratorResult, abstract: string, interface: string}
+ */
+function generateMapBody(object $test, array $bodySchema, bool $required = true, array $components = []): array
+{
+    $spec = [
+        'openapi' => '3.0.3',
+        'info' => ['title' => 'Test', 'version' => '1.0.0'],
+        'paths' => [
+            '/ts/reorder-cases' => [
+                'post' => [
+                    'operationId' => 'reorderCases',
+                    'tags' => ['Testing'],
+                    'requestBody' => [
+                        'required' => $required,
+                        'content' => ['application/json' => ['schema' => $bodySchema]],
+                    ],
+                    'responses' => ['200' => ['description' => 'OK']],
+                ],
+            ],
+        ],
+    ];
+    if ($components !== []) {
+        $spec['components'] = ['schemas' => $components];
+    }
+
+    mkdir($test->baseDir, 0755, true);
+    $specFile = $test->baseDir . '/test_spec.json';
+    file_put_contents($specFile, json_encode($spec));
+
+    $result = (new Generator(new Config(
+        specPath: realpath($specFile),
+        baseDir: $test->baseDir,
+        namespace: 'app\\modules\\api',
+    )))->generate();
+
+    return [
+        'result' => $result,
+        'abstract' => file_get_contents($test->baseDir . '/modules/api/contracts/AbstractTestingController.php'),
+        'interface' => file_get_contents($test->baseDir . '/modules/api/contracts/TestingControllerInterface.php'),
+    ];
+}
+
+test('map request body of strings generates bodyType meta with bodyIsMap and no wrapper DTO', function () {
+    $out = generateMapBody($this, [
+        'type' => 'object',
+        'description' => 'Map of case ID to position',
+        'additionalProperties' => ['type' => 'string'],
+    ]);
+
+    expect($out['result']->hasErrors())->toBeFalse();
+    expect($out['abstract'])->toContain("'bodyType' => 'string'");
+    expect($out['abstract'])->toContain("'bodyIsMap' => true");
+    expect($out['abstract'])->toContain("'bodyRequired' => true");
+    expect($out['abstract'])->not->toContain('bodyClass');
+    expect($out['abstract'])->not->toContain('bodyIsArray');
+    // the body is not a scalar `mixed` anymore (that made every object body fail)
+    expect($out['abstract'])->not->toContain("'bodyType' => 'mixed'");
+
+    expect($out['interface'])->toContain('public function actionReorderCases(array $body): void;');
+    expect($out['interface'])->toContain('@param array<string, string> $body');
+
+    expect(file_exists($this->baseDir . '/modules/api/schemas/ReorderCasesRequest.php'))->toBeFalse();
+    expect(file_exists($this->baseDir . '/modules/api/schemas/ReorderCasesRequestValue.php'))->toBeFalse();
+});
+
+test('map request body keeps the scalar value type', function (array $valueSchema, string $phpType) {
+    $out = generateMapBody($this, ['type' => 'object', 'additionalProperties' => $valueSchema]);
+
+    expect($out['abstract'])->toContain("'bodyType' => '{$phpType}'");
+    expect($out['abstract'])->toContain("'bodyIsMap' => true");
+    expect($out['interface'])->toContain("@param array<string, {$phpType}> \$body");
+})->with([
+    'integer' => [['type' => 'integer'], 'int'],
+    'number' => [['type' => 'number'], 'float'],
+    'boolean' => [['type' => 'boolean'], 'bool'],
+    'string' => [['type' => 'string'], 'string'],
+]);
+
+test('map request body with additionalProperties true is a map of mixed values', function () {
+    $out = generateMapBody($this, ['type' => 'object', 'additionalProperties' => true]);
+
+    expect($out['abstract'])->toContain("'bodyType' => 'mixed'");
+    expect($out['abstract'])->toContain("'bodyIsMap' => true");
+    expect($out['interface'])->toContain('public function actionReorderCases(array $body): void;');
+});
+
+test('map request body of component objects references the value class', function () {
+    $out = generateMapBody(
+        $this,
+        ['type' => 'object', 'additionalProperties' => ['$ref' => '#/components/schemas/Position']],
+        true,
+        ['Position' => [
+            'type' => 'object',
+            'required' => ['order'],
+            'properties' => ['order' => ['type' => 'integer'], 'note' => ['type' => 'string']],
+        ]],
+    );
+
+    expect($out['abstract'])->toContain("'bodyClass' => \\app\\modules\\api\\schemas\\Position::class");
+    expect($out['abstract'])->toContain("'bodyIsMap' => true");
+    expect($out['abstract'])->not->toContain('bodyType');
+    expect($out['interface'])->toContain('@param array<string, Position> $body');
+    expect($out['interface'])->toContain('public function actionReorderCases(array $body): void;');
+    expect(file_exists($this->baseDir . '/modules/api/schemas/Position.php'))->toBeTrue();
+    // the value class is referenced by the docblock only, a map is never typed as the DTO itself
+    expect($out['interface'])->not->toContain('use app\\modules\\api\\schemas\\Position;');
+});
+
+test('map request body of inline objects generates a value DTO', function () {
+    $out = generateMapBody($this, [
+        'type' => 'object',
+        'additionalProperties' => [
+            'type' => 'object',
+            'properties' => ['order' => ['type' => 'integer']],
+        ],
+    ]);
+
+    expect(file_exists($this->baseDir . '/modules/api/schemas/ReorderCasesRequestValue.php'))->toBeTrue();
+    expect($out['abstract'])->toContain("'bodyClass' => \\app\\modules\\api\\schemas\\ReorderCasesRequestValue::class");
+    expect($out['abstract'])->toContain("'bodyIsMap' => true");
+    expect($out['interface'])->toContain('@param array<string, ReorderCasesRequestValue> $body');
+});
+
+test('optional map request body generates a nullable parameter', function () {
+    $out = generateMapBody($this, ['type' => 'object', 'additionalProperties' => ['type' => 'string']], false);
+
+    expect($out['abstract'])->toContain("'bodyRequired' => false");
+    expect($out['interface'])->toContain('public function actionReorderCases(?array $body = null): void;');
+});
+
+test('object body with fixed properties is still a DTO, not a map', function () {
+    $out = generateMapBody($this, [
+        'type' => 'object',
+        'properties' => ['name' => ['type' => 'string']],
+        'additionalProperties' => ['type' => 'string'],
+    ]);
+
+    expect($out['abstract'])->toContain("'bodyClass' => \\app\\modules\\api\\schemas\\ReorderCasesRequest::class");
+    expect($out['abstract'])->not->toContain('bodyIsMap');
+    expect($out['interface'])->toContain('ReorderCasesRequest $body');
+});
+
+test('object body without additionalProperties or with additionalProperties false is not a map', function (array $schema) {
+    $out = generateMapBody($this, array_merge(['type' => 'object', 'properties' => ['name' => ['type' => 'string']]], $schema));
+
+    expect($out['abstract'])->not->toContain('bodyIsMap');
+})->with([
+    'without additionalProperties' => [[]],
+    'additionalProperties false' => [['additionalProperties' => false]],
+]);
+
+test('map declared as a named component is a map body as well', function () {
+    $out = generateMapBody(
+        $this,
+        ['$ref' => '#/components/schemas/PositionMap'],
+        true,
+        ['PositionMap' => ['type' => 'object', 'additionalProperties' => ['type' => 'string']]],
+    );
+
+    expect($out['abstract'])->toContain("'bodyType' => 'string'");
+    expect($out['abstract'])->toContain("'bodyIsMap' => true");
+    expect($out['interface'])->toContain('public function actionReorderCases(array $body): void;');
+});
+
+test('array and primitive bodies are not affected by map support', function () {
+    $out = generateMapBody($this, ['type' => 'array', 'items' => ['type' => 'integer']]);
+
+    expect($out['abstract'])->toContain("'bodyIsArray' => true");
+    expect($out['abstract'])->not->toContain('bodyIsMap');
+    expect($out['interface'])->toContain('@param int[] $body');
+});

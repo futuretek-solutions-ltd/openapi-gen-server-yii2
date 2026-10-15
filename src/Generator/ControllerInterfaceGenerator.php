@@ -126,6 +126,8 @@ final class ControllerInterfaceGenerator
         if ($op->requestBodyClass !== null) {
             if ($op->requestBodyIsArray) {
                 $lines[] = " * @param {$op->requestBodyClass}[] \$body Request body (array)";
+            } elseif ($op->requestBodyIsMap) {
+                $lines[] = " * @param array<string, {$op->requestBodyClass}> \$body Request body (map)";
             } else {
                 $lines[] = " * @param {$op->requestBodyClass} \$body Request body";
             }
@@ -161,7 +163,7 @@ final class ControllerInterfaceGenerator
 
         // Body parameter — bucket by required/optional
         if ($op->requestBodyClass !== null) {
-            $type = $op->requestBodyIsArray ? 'array' : $op->requestBodyClass;
+            $type = ($op->requestBodyIsArray || $op->requestBodyIsMap) ? 'array' : $op->requestBodyClass;
             if ($op->requestBodyRequired) {
                 $required[] = "{$type} \$body";
             } else {
@@ -233,7 +235,7 @@ final class ControllerInterfaceGenerator
         $imports = [];
 
         foreach ($operations as $op) {
-            if ($op->requestBodyClass !== null && !in_array($op->requestBodyClass, self::BUILTIN_TYPES, true) && !$op->requestBodyIsArray) {
+            if ($op->requestBodyClass !== null && !in_array($op->requestBodyClass, self::BUILTIN_TYPES, true) && !$op->requestBodyIsArray && !$op->requestBodyIsMap) {
                 $imports[$op->requestBodyClass] = $schemaNamespace . '\\' . $op->requestBodyClass;
             }
 

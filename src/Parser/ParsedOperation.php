@@ -19,6 +19,7 @@ final class ParsedOperation
      * @param string|null $requestBodyMediaType Media type for request body
      * @param bool $requestBodyRequired Whether request body is required
      * @param bool $requestBodyIsArray Whether request body is an array of $requestBodyClass items
+     * @param bool $requestBodyIsMap Whether request body is a map (JSON object with arbitrary keys, `additionalProperties`) of string keys to $requestBodyClass values. For map bodies, $requestBodyClass is the value type (scalar type name or DTO class name).
      * @param ParsedParameter[] $parameters All parameters (path, query, header, cookie)
      * @param array<int, string> $responses Map of HTTP status code => DTO class name
      * @param string|null $successResponseClass Primary success response DTO class name. For array responses, this is the item class name.
@@ -37,6 +38,7 @@ final class ParsedOperation
         public readonly ?string $requestBodyMediaType = null,
         public readonly bool $requestBodyRequired = false,
         public readonly bool $requestBodyIsArray = false,
+        public readonly bool $requestBodyIsMap = false,
         public readonly array $parameters = [],
         public readonly array $responses = [],
         public readonly ?string $successResponseClass = null,
